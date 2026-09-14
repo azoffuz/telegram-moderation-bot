@@ -31,8 +31,11 @@ def main_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚙️ Guruh Himoya Sozlamalari", callback_data="panel:settings")
             ],
             [
-                InlineKeyboardButton(text="👥 Bot Adminlarini Boshqarish", callback_data="panel:admins"),
-                InlineKeyboardButton(text="📊 Statistika", callback_data="panel:stats")
+                InlineKeyboardButton(text="📝 Taqiqlangan So'zlar", callback_data="panel:badwords"),
+                InlineKeyboardButton(text="👥 Bot Adminlari", callback_data="panel:admins")
+            ],
+            [
+                InlineKeyboardButton(text="📊 Jonli Hisobot & Statistika", callback_data="panel:today_report")
             ],
             [
                 InlineKeyboardButton(text="📢 Guruhga E'lon Yuborish", callback_data="panel:broadcast")
@@ -77,6 +80,24 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=f"⚡️ Anti-Flood: {status_icon(settings.get('anti_flood', True))}",
                     callback_data="toggle:anti_flood"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"🚫 Taqiqlangan So'zlar: {status_icon(settings.get('anti_badwords', True))}",
+                    callback_data="toggle:anti_badwords"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"🛑 Arab/Fors Spam: {status_icon(settings.get('anti_arabic', True))}",
+                    callback_data="toggle:anti_arabic"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"👶 Yangilar Media Cheklovi: {status_icon(settings.get('newcomer_media_lock', True))}",
+                    callback_data="toggle:newcomer_media_lock"
                 )
             ],
             [
@@ -494,3 +515,135 @@ async def cmd_broadcast(message: Message, bot: Bot):
     except Exception as e:
         logger.error(f"E'lon yuborishda xatolik: {e}")
         await message.reply(f"❌ Xatolik yuz berdi: {e}")
+
+# ==================== TAQIQLANGAN SO'ZLAR MENYUSI ====================
+@router.callback_query(F.data == "panel:badwords")
+async def cb_panel_badwords(callback: CallbackQuery):
+    """Taqiqlangan so'zlar ro'yxati va boshqaruvi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    words = await db.get_all_bad_words()
+    text = "📝 <b>TAQIQLANGAN SO'ZLAR RO'YXATI (Blacklist):</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+
+    if not words:
+        text += "<i>(Hozircha taqiqlangan so'zlar kiritilmagan)</i>\n"
+    else:
+        for idx, w in enumerate(words, 1):
+            text += f"{idx}. <code>{w}</code>\n"
+
+    text += (
+        "\n💡 <b>Yangi so'z qo'shish uchun:</b>\n"
+        "<code>/addword &lt;so'z&gt;</code>\n"
+        "<i>Misol:</i> <code>/addword 1xbet</code>\n\n"
+        "💡 <b>So'zni o'chirish uchun:</b>\n"
+        "<code>/delword &lt;so'z&gt;</code> yoki pastdagi tugmani bosing."
+    )
+
+    buttons = []
+    # Eng so'nggi 8 ta so'zni tugma qilib chiqaramiz (bitta bosishda o'chirish uchun)
+    for w in words[:8]:
+        buttons.append([
+            InlineKeyboardButton(text=f"❌ O'chirish: {w}", callback_data=f"del_word:{w}")
+        ])
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("del_word:"))
+async def cb_del_badword(callback: CallbackQuery, bot: Bot):
+    """Taqiqlangan so'zni inline tugma orqali o'chirish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    word_to_del = callback.data.split(":", 1)[1]
+    success = await db.remove_bad_word(word_to_del)
+    if success:
+        await callback.answer(f"✅ '{word_to_del}' so'zi o'chirildi!", show_alert=True)
+        await cb_panel_badwords(callback)
+    else:
+        await callback.answer("❌ So'z topilmadi!", show_alert=True)
+
+@router.callback_query(F.data == "panel:today_report")
+async def cb_panel_today_report(callback: CallbackQuery):
+    """Bugungi jonli moderatsiya hisoboti."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    from bot.services.scheduler import generate_daily_report_text
+    report_text = await generate_daily_report_text()
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Yangilash", callback_data="panel:today_report")],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:main")]
+        ]
+    )
+    await callback.message.edit_text(report_text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+# ==================== SO'ZLARNI QO'SHISH / O'CHIRISH BUYRUQLARI ====================
+@router.message(Command("addword"))
+async def cmd_add_word(message: Message):
+    """Taqiqlangan so'z qo'shish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("ℹ️ <b>Foydalanish:</b> <code>/addword so'z</code>", parse_mode="HTML")
+        return
+
+    new_word = parts[1].strip()
+    await db.add_bad_word(new_word, added_by=message.from_user.id)
+    await message.reply(f"✅ <code>{new_word}</code> taqiqlangan so'zlar ro'yxatiga qo'shildi.", parse_mode="HTML")
+
+@router.message(Command("delword"))
+async def cmd_del_word(message: Message):
+    """Taqiqlangan so'zni o'chirish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply("ℹ️ <b>Foydalanish:</b> <code>/delword so'z</code>", parse_mode="HTML")
+        return
+
+    del_w = parts[1].strip()
+    success = await db.remove_bad_word(del_w)
+    if success:
+        await message.reply(f"✅ <code>{del_w}</code> ro'yxatdan olib tashlandi.", parse_mode="HTML")
+    else:
+        await message.reply("❌ Bunday so'z topilmadi.")
+
+@router.message(Command("words"))
+async def cmd_words(message: Message):
+    """Taqiqlangan so'zlar ro'yxatini ko'rish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        return
+
+    words = await db.get_all_bad_words()
+    if not words:
+        await message.reply("ℹ️ Taqiqlangan so'zlar ro'yxati bo'sh.")
+        return
+
+    text = "📝 <b>TAQIQLANGAN SO'ZLAR:</b>\n\n"
+    for idx, w in enumerate(words, 1):
+        text += f"{idx}. <code>{w}</code>\n"
+    await message.reply(text, parse_mode="HTML")
+
+@router.message(Command("dailyreport"))
+async def cmd_daily_report(message: Message):
+    """Bugungi jonli hisobotni ko'rish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        return
+
+    from bot.services.scheduler import generate_daily_report_text
+    report_text = await generate_daily_report_text()
+    await message.reply(report_text, parse_mode="HTML")

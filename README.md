@@ -179,6 +179,10 @@ git push -u origin main
 | `/addadmin <ID> [Izoh]` | Botga yangi admin qo'shish (Bazada saqlanadi) | Faqat Owner |
 | `/deladmin <ID>` | Adminni o'chirish | Faqat Owner |
 | `/admins` | Barcha faol bot adminlarini ko'rish | Owner / Bot Admin |
+| `/addword <so'z>` | Taqiqlangan so'z qo'shish (Blacklist) | Owner / Bot Admin |
+| `/delword <so'z>` | Taqiqlangan so'zni o'chirish | Owner / Bot Admin |
+| `/words` | Taqiqlangan so'zlar ro'yxatini ko'rish | Owner / Bot Admin |
+| `/dailyreport` | Bugungi jonli moderatsiya hisobotini ko'rish | Owner / Bot Admin |
 | `/broadcast <matn>` | Butun guruhga administratsiya nomidan rasmiy e'lon yuborish | Owner / Bot Admin |
 
 ---

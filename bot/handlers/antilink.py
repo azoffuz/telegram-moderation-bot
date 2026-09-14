@@ -90,6 +90,8 @@ async def anti_link_handler(message: Message, bot: Bot):
     except Exception as e:
         logger.warning(f"Havola xabarini o'chirishda xatolik: {e}")
 
+    await db.increment_stat("links_deleted")
+
     # Guruhga qisqa ogohlantirish (chat toza bo'lishi uchun 10 soniyada o'chiriladi)
     user = message.from_user
     full_text = message.text or message.caption or ""

@@ -72,6 +72,8 @@ async def anti_forward_handler(message: Message, bot: Bot):
     except Exception as e:
         logger.warning(f"Forward xabarni o'chirishda xatolik: {e}")
 
+    await db.increment_stat("forwards_deleted")
+
     # Guruhga qisqa ogohlantirish (chat toza bo'lishi uchun 10 soniyada o'chiriladi)
     user = message.from_user
     warn_msg = await message.answer(

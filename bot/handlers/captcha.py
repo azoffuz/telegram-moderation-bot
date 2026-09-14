@@ -77,6 +77,10 @@ async def on_user_joined_chat_member(event: ChatMemberUpdated, bot: Bot):
 
     chat = event.chat
 
+    # Yangi a'zo sifatida qayd etamiz va statistikani oshiramiz
+    await db.record_newcomer(user.id, chat.id)
+    await db.increment_stat("joins_count")
+
     # Admin paneldan Captcha o'chirilgan bo'lsa tekshirish
     if not await db.get_chat_setting_bool(chat.id, "captcha_enabled", default=True):
         return
