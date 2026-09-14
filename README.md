@@ -171,7 +171,19 @@ git push -u origin main
 
 ---
 
-## 📑 Admin Buyruqlari Ma'lumotnomasi
+## 🎛 Admin Panel va Adminlar Boshqaruvi
+
+| Buyruq | Tavsif | Huquq |
+| :--- | :--- | :--- |
+| `/admin` yoki `/panel` | Interaktiv Admin Panelni ochish (sozlamalarni bitta tugma bilan yoqish/o'chirish) | Owner / Bot Admin |
+| `/addadmin <ID> [Izoh]` | Botga yangi admin qo'shish (Bazada saqlanadi) | Faqat Owner |
+| `/deladmin <ID>` | Adminni o'chirish | Faqat Owner |
+| `/admins` | Barcha faol bot adminlarini ko'rish | Owner / Bot Admin |
+| `/broadcast <matn>` | Butun guruhga administratsiya nomidan rasmiy e'lon yuborish | Owner / Bot Admin |
+
+---
+
+## 📑 Guruh Moderatsiya Buyruqlari
 
 | Buyruq | Tavsif | Misol |
 | :--- | :--- | :--- |

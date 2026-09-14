@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_MEMBER
 from bot.config import config
+from bot.database import db
 from bot.filters.chat_type import IsGroupFilter
 from bot.services.logger import log_captcha
 from bot.services.cleaner import auto_delete
@@ -75,6 +76,11 @@ async def on_user_joined_chat_member(event: ChatMemberUpdated, bot: Bot):
         return
 
     chat = event.chat
+
+    # Admin paneldan Captcha o'chirilgan bo'lsa tekshirish
+    if not await db.get_chat_setting_bool(chat.id, "captcha_enabled", default=True):
+        return
+
     # 1. Guruhda yozish huquqini darhol cheklaymiz
     try:
         await bot.restrict_chat_member(

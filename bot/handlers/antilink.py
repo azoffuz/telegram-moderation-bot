@@ -7,6 +7,7 @@ from aiogram.enums import MessageEntityType
 from bot.config import config
 from bot.filters.chat_type import IsGroupFilter
 from bot.filters.admin import IsAdminFilter
+from bot.database import db
 from bot.services.logger import log_anti_link
 from bot.services.cleaner import auto_delete
 
@@ -73,6 +74,10 @@ async def anti_link_handler(message: Message, bot: Bot):
     # Adminlarni tekshiramiz (adminlarga ruxsat beriladi)
     is_admin = await IsAdminFilter()(message, bot)
     if is_admin:
+        return
+
+    # Admin paneldan Anti-Link o'chirilgan bo'lsa
+    if not await db.get_chat_setting_bool(message.chat.id, "anti_link", default=True):
         return
 
     detected_link = detect_link(message)

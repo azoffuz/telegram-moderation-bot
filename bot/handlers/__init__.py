@@ -1,4 +1,5 @@
 from aiogram import Dispatcher
+from bot.handlers.admin_panel import router as admin_panel_router
 from bot.handlers.service import router as service_router
 from bot.handlers.captcha import router as captcha_router
 from bot.handlers.moderation import router as moderation_router
@@ -10,6 +11,7 @@ from bot.handlers.antilink import router as antilink_router
 
 def register_routers(dp: Dispatcher):
     """Barcha routerlarni to'g'ri tartibda dispatcherga ro'yxatdan o'tkazish."""
+    dp.include_router(admin_panel_router)
     dp.include_router(service_router)
     dp.include_router(captcha_router)
     dp.include_router(moderation_router)

@@ -6,6 +6,7 @@ from aiogram import Router, Bot
 from aiogram.types import Message, ChatPermissions
 from bot.filters.chat_type import IsGroupFilter
 from bot.filters.admin import IsAdminFilter
+from bot.database import db
 from bot.services.logger import log_moderation
 from bot.services.cleaner import auto_delete
 
@@ -30,6 +31,10 @@ async def anti_flood_handler(message: Message, bot: Bot):
     # Adminlarni cheklamaymiz
     is_admin = await IsAdminFilter()(message, bot)
     if is_admin:
+        return
+
+    # Admin paneldan Anti-Flood o'chirilgan bo'lsa
+    if not await db.get_chat_setting_bool(message.chat.id, "anti_flood", default=True):
         return
 
     user_id = message.from_user.id

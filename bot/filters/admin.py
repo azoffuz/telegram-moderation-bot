@@ -3,18 +3,44 @@ from aiogram.filters import Filter
 from aiogram.types import Message, CallbackQuery, ChatMemberUpdated
 from aiogram.enums import ChatMemberStatus, ChatType
 from bot.config import config
+from bot.database import db
+
+class IsOwnerFilter(Filter):
+    """
+    Faqatgina .env da belgilangan Asosiy Bosh Admin (Owner) larni tekshiradi.
+    Yangi admin qo'shish, o'chirish faqat Owner huquqida bo'ladi.
+    """
+    async def __call__(self, event: Union[Message, CallbackQuery, ChatMemberUpdated]) -> bool:
+        user = getattr(event, "from_user", None)
+        if not user:
+            return False
+        return db.is_owner(user.id)
+
+class IsBotAdminFilter(Filter):
+    """
+    Owner yoki bot ichida qo'shilgan rasmiy Bot Adminlarini tekshiradi.
+    Admin panelni ochish va sozlamalarni o'zgartirish uchun ishlatiladi.
+    """
+    async def __call__(self, event: Union[Message, CallbackQuery, ChatMemberUpdated]) -> bool:
+        user = getattr(event, "from_user", None)
+        if not user:
+            return False
+        return await db.is_bot_admin(user.id)
 
 class IsAdminFilter(Filter):
     """
-    Foydalanuvchi asosiy admin (ADMIN_IDS) yoki guruh administratori ekanligini tekshiradi.
+    Umumiy moderatsiya uchun adminlik tekshiruvi:
+    1. Owner
+    2. Bot Admini (baza)
+    3. Telegram guruhining administratori
     """
     async def __call__(self, event: Union[Message, CallbackQuery, ChatMemberUpdated], bot) -> bool:
         user = getattr(event, "from_user", None)
         if not user:
             return False
 
-        # 1. Configdagi asosiy adminlar ro'yxatida bo'lsa
-        if user.id in config.ADMIN_IDS:
+        # 1. Owner yoki Bot Admini bo'lsa
+        if await db.is_bot_admin(user.id):
             return True
 
         # 2. Guruh admini ekanligini tekshirish

@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.enums import ContentType
 from bot.filters.chat_type import IsGroupFilter
+from bot.database import db
 
 logger = logging.getLogger(__name__)
 router = Router(name="service_cleaner")
@@ -26,6 +27,10 @@ async def delete_service_messages(message: Message):
     Guruhdagi barcha xizmat xabarlarini (kirdi, chiqdi, qadaldi va h.k.) darhol o'chiradi.
     Chat har doim toza va tartibli turadi.
     """
+    # Admin paneldan xizmat xabarlarini o'chirish o'chirilgan bo'lsa
+    if not await db.get_chat_setting_bool(message.chat.id, "service_cleaner", default=True):
+        return
+
     try:
         await message.delete()
     except Exception as e:

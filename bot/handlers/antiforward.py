@@ -3,6 +3,7 @@ from aiogram import Router, Bot
 from aiogram.types import Message
 from bot.filters.chat_type import IsGroupFilter
 from bot.filters.admin import IsAdminFilter
+from bot.database import db
 from bot.services.logger import log_anti_forward
 from bot.services.cleaner import auto_delete
 
@@ -55,6 +56,10 @@ async def anti_forward_handler(message: Message, bot: Bot):
     # Adminlarga ruxsat
     is_admin = await IsAdminFilter()(message, bot)
     if is_admin:
+        return
+
+    # Admin paneldan Anti-Forward o'chirilgan bo'lsa
+    if not await db.get_chat_setting_bool(message.chat.id, "anti_forward", default=True):
         return
 
     forwarded, source_info = is_forwarded(message)
