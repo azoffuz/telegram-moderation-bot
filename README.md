@@ -162,8 +162,8 @@ git commit -m "feat: Telegram guruh moderatsiya boti to'liq tayyor"
 # 4. Asosiy tarmoqni 'main' deb belgilash
 git branch -M main
 
-# 5. GitHub'dagi repozitoriyangizni ulash (URL o'zingizniki bo'lsin)
-git remote add origin https://github.com/USERNAME/telegram-moderation-bot.git
+# 5. GitHub'dagi repozitoriyangizni ulash
+git remote add origin https://github.com/azoffuz/telegram-moderation-bot.git
 
 # 6. Kodlarni GitHub'ga yuklash
 git push -u origin main
