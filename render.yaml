@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: telegram-moderation-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: GROUP_ID
+        sync: false
+      - key: LOG_CHANNEL_ID
+        sync: false
+      - key: DISCORD_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CAPTCHA_TIMEOUT
+        value: "90"
+      - key: MAX_WARNS
+        value: "3"
+      - key: AUTO_DELETE_DELAY
+        value: "20"
+      - key: PORT
+        value: "8080"
