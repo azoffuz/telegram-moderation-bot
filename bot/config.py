@@ -5,13 +5,40 @@ from dotenv import load_dotenv
 # .env faylini yuklaymiz
 load_dotenv()
 
+def parse_channel_or_group_id(raw_val: Optional[str]) -> Optional[int]:
+    """
+    Guruh yoki kanal ID sini to'g'ri Telegram Bot API formatiga o'tkazadi.
+    Vergullar (4,320,577,661) va bo'sh joylarni tozalaydi.
+    Agar foydalanuvchi -100 siz kiritgan bo'lsa (4320577661),
+    avtomatik -1004320577661 formatiga keltiradi.
+    """
+    if not raw_val:
+        return None
+    cleaned = str(raw_val).strip().replace(",", "").replace(" ", "").replace("'", "").replace('"', "")
+    if not cleaned:
+        return None
+
+    # Allaqachon to'g'ri -100 bilan kiritilgan bo'lsa
+    if cleaned.startswith("-100") and cleaned[4:].isdigit():
+        return int(cleaned)
+
+    # Agar - bilan boshlangan bo'lsa
+    if cleaned.startswith("-") and cleaned[1:].isdigit():
+        if len(cleaned[1:]) >= 9:
+            return int(f"-100{cleaned[1:]}")
+        return int(cleaned)
+
+    # Agar musbat raqam bo'lsa (masalan: 4320577661)
+    if cleaned.isdigit():
+        return int(f"-100{cleaned}")
+
 def parse_admin_ids(raw_val: str) -> List[int]:
     """Vergul bilan ajratilgan admin ID larini int ro'yxatiga o'tkazadi."""
     if not raw_val:
         return []
     ids = []
     for item in raw_val.split(","):
-        cleaned = item.strip()
+        cleaned = item.strip().replace(" ", "")
         if cleaned.lstrip("-").isdigit():
             ids.append(int(cleaned))
     return ids
@@ -23,18 +50,10 @@ class Config:
     ADMIN_IDS: List[int] = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
     
     # Nazorat qilinadigan asosiy guruh ID si
-    GROUP_ID: Optional[int] = (
-        int(os.getenv("GROUP_ID").strip())
-        if os.getenv("GROUP_ID", "").strip().lstrip("-").isdigit()
-        else None
-    )
+    GROUP_ID: Optional[int] = parse_channel_or_group_id(os.getenv("GROUP_ID"))
     
     # Maxfiy log kanal ID si
-    LOG_CHANNEL_ID: Optional[int] = (
-        int(os.getenv("LOG_CHANNEL_ID").strip())
-        if os.getenv("LOG_CHANNEL_ID", "").strip().lstrip("-").isdigit()
-        else None
-    )
+    LOG_CHANNEL_ID: Optional[int] = parse_channel_or_group_id(os.getenv("LOG_CHANNEL_ID"))
     
     # Discord server havolasi
     DISCORD_URL: str = os.getenv("DISCORD_URL", "https://discord.gg/").strip()
