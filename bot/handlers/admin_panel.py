@@ -612,14 +612,30 @@ async def cmd_add_word(message: Message, bot: Bot):
     if not await db.is_bot_admin(message.from_user.id):
         return
 
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("ℹ️ <b>Foydalanish:</b> <code>/addword so'z</code>", parse_mode="HTML")
+        if is_group:
+            err_msg = await message.answer("ℹ️ <b>Foydalanish:</b> <code>/addword so'z</code>", parse_mode="HTML")
+            auto_delete(err_msg, delay=3)
+        else:
+            await message.reply("ℹ️ <b>Foydalanish:</b> <code>/addword so'z</code>", parse_mode="HTML")
         return
 
     new_word = parts[1].strip()
     await db.add_bad_word(new_word, added_by=message.from_user.id)
-    await message.reply(f"✅ <code>{new_word}</code> taqiqlangan so'zlar ro'yxatiga qo'shildi.", parse_mode="HTML")
+
+    if is_group:
+        conf_msg = await message.answer("✅ Taqiqlangan so'zlar ro'yxatiga qo'shildi.", parse_mode="HTML")
+        auto_delete(conf_msg, delay=2)
+    else:
+        await message.reply(f"✅ <code>{new_word}</code> taqiqlangan so'zlar ro'yxatiga qo'shildi.", parse_mode="HTML")
 
     admin_user = message.from_user
     await send_log(
@@ -629,6 +645,7 @@ async def cmd_add_word(message: Message, bot: Bot):
         f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
         f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
         f"🚫 <b>Qo'shilgan so'z:</b> <code>{new_word}</code>\n"
+        f"📍 <b>Manzil:</b> {message.chat.title if is_group else 'Shaxsiy chat'}\n"
         f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
 
@@ -638,15 +655,31 @@ async def cmd_del_word(message: Message, bot: Bot):
     if not await db.is_bot_admin(message.from_user.id):
         return
 
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.reply("ℹ️ <b>Foydalanish:</b> <code>/delword so'z</code>", parse_mode="HTML")
+        if is_group:
+            err_msg = await message.answer("ℹ️ <b>Foydalanish:</b> <code>/delword so'z</code>", parse_mode="HTML")
+            auto_delete(err_msg, delay=3)
+        else:
+            await message.reply("ℹ️ <b>Foydalanish:</b> <code>/delword so'z</code>", parse_mode="HTML")
         return
 
     del_w = parts[1].strip()
     success = await db.remove_bad_word(del_w)
     if success:
-        await message.reply(f"✅ <code>{del_w}</code> ro'yxatdan olib tashlandi.", parse_mode="HTML")
+        if is_group:
+            conf_msg = await message.answer("✅ So'z taqiqlanganlar ro'yxatidan olib tashlandi.", parse_mode="HTML")
+            auto_delete(conf_msg, delay=2)
+        else:
+            await message.reply(f"✅ <code>{del_w}</code> ro'yxatdan olib tashlandi.", parse_mode="HTML")
+
         admin_user = message.from_user
         await send_log(
             bot,
@@ -655,10 +688,15 @@ async def cmd_del_word(message: Message, bot: Bot):
             f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
             f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
             f"⭕️ <b>O'chirilgan so'z:</b> <code>{del_w}</code>\n"
+            f"📍 <b>Manzil:</b> {message.chat.title if is_group else 'Shaxsiy chat'}\n"
             f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
     else:
-        await message.reply("❌ Bunday so'z topilmadi.")
+        if is_group:
+            err_msg = await message.answer("❌ Bunday so'z topilmadi.")
+            auto_delete(err_msg, delay=2)
+        else:
+            await message.reply("❌ Bunday so'z topilmadi.")
 
 @router.message(Command("words"))
 async def cmd_words(message: Message):
@@ -666,15 +704,26 @@ async def cmd_words(message: Message):
     if not await db.is_bot_admin(message.from_user.id):
         return
 
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
     words = await db.get_all_bad_words()
     if not words:
-        await message.reply("ℹ️ Taqiqlangan so'zlar ro'yxati bo'sh.")
+        msg = await message.reply("ℹ️ Taqiqlangan so'zlar ro'yxati bo'sh.")
+        if is_group:
+            auto_delete(msg, delay=3)
         return
 
     text = "📝 <b>TAQIQLANGAN SO'ZLAR:</b>\n\n"
     for idx, w in enumerate(words, 1):
         text += f"{idx}. <code>{w}</code>\n"
-    await message.reply(text, parse_mode="HTML")
+    msg = await message.reply(text, parse_mode="HTML")
+    if is_group:
+        auto_delete(msg, delay=10)
 
 @router.message(Command("dailyreport"))
 async def cmd_daily_report(message: Message):
