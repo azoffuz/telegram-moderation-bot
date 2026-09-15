@@ -36,9 +36,14 @@ class Database:
             try:
                 self.pg_pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=5)
                 logger.info("Supabase (PostgreSQL) bazasiga muvaffaqiyatli ulandi.")
-            except Exception as e:
-                logger.error(f"PostgreSQL ulanishida xatolik, SQLite ga o'tilmoqda: {e}")
-                self.is_postgres = False
+            except Exception as e1:
+                logger.warning(f"Standart PostgreSQL ulanishda xatolik ({e1}), ssl='require' bilan qayta urinilmoqda...")
+                try:
+                    self.pg_pool = await asyncpg.create_pool(dsn=db_url, ssl="require", min_size=1, max_size=5)
+                    logger.info("Supabase (PostgreSQL) bazasiga SSL bilan muvaffaqiyatli ulandi.")
+                except Exception as e2:
+                    logger.error(f"PostgreSQL ulanishida yakuniy xatolik, SQLite ga o'tilmoqda: {e2}")
+                    self.is_postgres = False
 
         if not self.is_postgres:
             self.sqlite_conn = await aiosqlite.connect(self.sqlite_path)
