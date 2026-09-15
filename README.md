@@ -52,7 +52,10 @@ Professional, 100% spamsiz, tezkor va avtomatlashtirilgan Telegram guruh moderat
 9. **📋 Maxfiy Log Kanal**:
    - Har bir hodisa (Captcha o'tishi/o'tmasligi, link o'chirilishi, forward o'chirilishi, warn, mute, ban, report) maxfiy log kanalga chiroyli HTML formatda yuboriladi.
 
-10. **📜 Foydalanuvchi Buyruqlari**:
+10. **⭐️ Anti-Premium Emoji (Tashqi va Maxsus Emojilarni O'chirish)**:
+    - Telegram Premium foydalanuvchilari va spambotlar tomonidan yuboriladigan tashqi/maxsus animatsiyali emojilar (`custom_emoji`) avtomatik aniqlanib o'chiriladi. Paneldan yoqish/o'chirish mumkin.
+
+11. **📜 Foydalanuvchi Buyruqlari**:
     - `/rules` - Guruh qoidalari.
     - `/discord` - Discord server havolasi (Inline tugma bilan).
     - `/report [sabab]` - Qoidabuzar xabarga reply qilib adminga va log kanalga xabar berish.

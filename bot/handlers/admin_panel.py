@@ -102,6 +102,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"⭐️ Premium Emojilar: {status_icon(settings.get('anti_custom_emoji', True))}",
+                    callback_data="toggle:anti_custom_emoji"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🌙 Tungi Rejim: {night_icon(settings.get('night_mode', False))}",
                     callback_data="toggle:night_mode"
                 )

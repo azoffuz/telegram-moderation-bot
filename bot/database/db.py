@@ -81,6 +81,7 @@ class Database:
                         anti_badwords BOOLEAN DEFAULT TRUE,
                         anti_arabic BOOLEAN DEFAULT TRUE,
                         newcomer_media_lock BOOLEAN DEFAULT TRUE,
+                        anti_custom_emoji BOOLEAN DEFAULT TRUE,
                         probation_minutes INT DEFAULT 60
                     );
                 """)
@@ -138,6 +139,7 @@ class Database:
                     anti_badwords BOOLEAN DEFAULT 1,
                     anti_arabic BOOLEAN DEFAULT 1,
                     newcomer_media_lock BOOLEAN DEFAULT 1,
+                    anti_custom_emoji BOOLEAN DEFAULT 1,
                     probation_minutes INTEGER DEFAULT 60
                 );
             """)
@@ -165,6 +167,17 @@ class Database:
                 );
             """)
             await self.sqlite_conn.commit()
+
+        # Mavjud bazalar uchun xavfsiz ustun qo'shish (Migration)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS anti_custom_emoji BOOLEAN DEFAULT TRUE;")
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("ALTER TABLE chat_settings ADD COLUMN anti_custom_emoji BOOLEAN DEFAULT 1;")
+                await self.sqlite_conn.commit()
+        except Exception:
+            pass
 
     async def _seed_default_bad_words(self):
         """Baza bo'sh bo'lsa standart taqiqlangan so'zlarni kiritadi."""
@@ -266,6 +279,7 @@ class Database:
         "anti_badwords": True,
         "anti_arabic": True,
         "newcomer_media_lock": True,
+        "anti_custom_emoji": True,
     }
 
     async def get_chat_setting_bool(self, chat_id: int, setting_name: str, default: bool = True) -> bool:
@@ -467,6 +481,7 @@ class Database:
             "badwords_deleted": 0,
             "arabic_deleted": 0,
             "media_blocked": 0,
+            "custom_emoji_deleted": 0,
             "mutes_count": 0,
             "warns_count": 0,
             "joins_count": 0

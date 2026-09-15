@@ -19,7 +19,8 @@ async def generate_daily_report_text(target_date: Optional[date] = None) -> str:
         stats.get("forwards_deleted", 0) +
         stats.get("badwords_deleted", 0) +
         stats.get("arabic_deleted", 0) +
-        stats.get("media_blocked", 0)
+        stats.get("media_blocked", 0) +
+        stats.get("custom_emoji_deleted", 0)
     )
 
     text = (
@@ -30,6 +31,7 @@ async def generate_daily_report_text(target_date: Optional[date] = None) -> str:
         f"🔀 <b>To'xtatilgan forwardlar:</b> {stats.get('forwards_deleted', 0)} ta\n"
         f"🚫 <b>Taqiqlangan so'zlar:</b> {stats.get('badwords_deleted', 0)} ta\n"
         f"🛑 <b>Arab/Fors spamlari:</b> {stats.get('arabic_deleted', 0)} ta\n"
+        f"⭐️ <b>O'chirilgan Premium emojilar:</b> {stats.get('custom_emoji_deleted', 0)} ta\n"
         f"👶 <b>Yangi a'zolardan bloklangan media:</b> {stats.get('media_blocked', 0)} ta\n"
         f"⚠️ <b>Berilgan ogohlantirishlar (Warn):</b> {stats.get('warns_count', 0)} ta\n"
         f"🔇 <b>Mute qilinganlar:</b> {stats.get('mutes_count', 0)} ta\n"
