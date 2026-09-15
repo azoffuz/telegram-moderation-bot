@@ -391,10 +391,12 @@ class Database:
         words = await self.get_all_bad_words()
         lowered = text.lower()
         for w in words:
-            # So'z to'liq yoki so'z sifatida qatnashganini tekshiramiz
-            pattern = re.escape(w)
+            w_clean = w.strip().lower()
+            if not w_clean or len(w_clean) < 2:
+                continue
+            pattern = re.escape(w_clean)
             if re.search(pattern, lowered):
-                return w
+                return w_clean
         return None
 
     # ==================== YANGI A'ZOLAR SINOV MUDDATI ====================
