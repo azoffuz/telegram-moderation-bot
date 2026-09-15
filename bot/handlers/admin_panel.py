@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Optional
 from aiogram import Router, Bot, F
 from aiogram.filters import Command, CommandStart
@@ -572,6 +573,16 @@ async def cb_del_badword(callback: CallbackQuery, bot: Bot):
     if success:
         await callback.answer(f"✅ '{word_to_del}' so'zi o'chirildi!", show_alert=True)
         await cb_panel_badwords(callback)
+        admin_user = callback.from_user
+        await send_log(
+            bot,
+            f"🗑 <b>TAQIQLANGAN SO'Z O'CHIRILDI</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
+            f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
+            f"⭕️ <b>O'chirilgan so'z:</b> <code>{word_to_del}</code>\n"
+            f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
     else:
         await callback.answer("❌ So'z topilmadi!", show_alert=True)
 
@@ -596,7 +607,7 @@ async def cb_panel_today_report(callback: CallbackQuery):
 
 # ==================== SO'ZLARNI QO'SHISH / O'CHIRISH BUYRUQLARI ====================
 @router.message(Command("addword"))
-async def cmd_add_word(message: Message):
+async def cmd_add_word(message: Message, bot: Bot):
     """Taqiqlangan so'z qo'shish."""
     if not await db.is_bot_admin(message.from_user.id):
         return
@@ -610,8 +621,19 @@ async def cmd_add_word(message: Message):
     await db.add_bad_word(new_word, added_by=message.from_user.id)
     await message.reply(f"✅ <code>{new_word}</code> taqiqlangan so'zlar ro'yxatiga qo'shildi.", parse_mode="HTML")
 
+    admin_user = message.from_user
+    await send_log(
+        bot,
+        f"📝 <b>YANGI TAQIQLANGAN SO'Z QO'SHILDI</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
+        f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
+        f"🚫 <b>Qo'shilgan so'z:</b> <code>{new_word}</code>\n"
+        f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
 @router.message(Command("delword"))
-async def cmd_del_word(message: Message):
+async def cmd_del_word(message: Message, bot: Bot):
     """Taqiqlangan so'zni o'chirish."""
     if not await db.is_bot_admin(message.from_user.id):
         return
@@ -625,6 +647,16 @@ async def cmd_del_word(message: Message):
     success = await db.remove_bad_word(del_w)
     if success:
         await message.reply(f"✅ <code>{del_w}</code> ro'yxatdan olib tashlandi.", parse_mode="HTML")
+        admin_user = message.from_user
+        await send_log(
+            bot,
+            f"🗑 <b>TAQIQLANGAN SO'Z O'CHIRILDI</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
+            f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
+            f"⭕️ <b>O'chirilgan so'z:</b> <code>{del_w}</code>\n"
+            f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
     else:
         await message.reply("❌ Bunday so'z topilmadi.")
 
