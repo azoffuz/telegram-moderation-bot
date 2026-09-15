@@ -125,6 +125,9 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     if not message.from_user:
         return
 
+    # Foydalanuvchi ma'lumotlarini bazada yangilab boramiz (@username orqali jazo qo'llash uchun)
+    await db.save_known_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
+
     # Adminlarga barcha himoyalardan o'tishga ruxsat beriladi
     if await IsAdminFilter()(message, bot):
         return

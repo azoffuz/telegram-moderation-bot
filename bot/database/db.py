@@ -108,6 +108,14 @@ class Database:
                         PRIMARY KEY (stat_date, stat_type)
                     );
                 """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS known_users (
+                        user_id BIGINT PRIMARY KEY,
+                        username TEXT,
+                        full_name TEXT,
+                        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
         else:
             await self.sqlite_conn.execute("""
                 CREATE TABLE IF NOT EXISTS warnings (
@@ -164,6 +172,14 @@ class Database:
                     stat_type TEXT,
                     count INTEGER DEFAULT 0,
                     PRIMARY KEY (stat_date, stat_type)
+                );
+            """)
+            await self.sqlite_conn.execute("""
+                CREATE TABLE IF NOT EXISTS known_users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    full_name TEXT,
+                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             await self.sqlite_conn.commit()
@@ -603,6 +619,84 @@ class Database:
     async def set_night_mode(self, chat_id: int, enabled: bool):
         """Tungi rejim holatini saqlaydi."""
         await self.set_chat_setting_bool(chat_id, "night_mode", enabled)
+
+    # ==================== FOYDALANUVCHILARNI RO'YXATGA OLISH (KNOWN USERS) ====================
+    async def save_known_user(self, user_id: int, username: Optional[str], full_name: str):
+        """Foydalanuvchi ma'lumotlarini saqlash yoki yangilash."""
+        u_clean = username.lower().lstrip("@") if username else None
+        now = datetime.now()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO known_users (user_id, username, full_name, last_seen)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (user_id) DO UPDATE 
+                        SET username = COALESCE($2, known_users.username),
+                            full_name = $3,
+                            last_seen = $4
+                    """, user_id, u_clean, full_name, now)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO known_users (user_id, username, full_name, last_seen)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE 
+                    SET username = COALESCE(excluded.username, known_users.username),
+                        full_name = excluded.full_name,
+                        last_seen = excluded.last_seen
+                """, (user_id, u_clean, full_name, now))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.debug(f"save_known_user xatosi: {e}")
+
+    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Username orqali foydalanuvchini topish."""
+        if not username:
+            return None
+        u_clean = username.lower().lstrip("@")
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT user_id, username, full_name FROM known_users WHERE LOWER(username) = $1",
+                        u_clean
+                    )
+                    if row:
+                        return dict(row)
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(
+                    "SELECT user_id, username, full_name FROM known_users WHERE LOWER(username) = ?",
+                    (u_clean,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return {"user_id": row[0], "username": row[1], "full_name": row[2]}
+        except Exception as e:
+            logger.debug(f"get_user_by_username xatosi: {e}")
+        return None
+
+    async def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """User ID orqali foydalanuvchini topish."""
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT user_id, username, full_name FROM known_users WHERE user_id = $1",
+                        user_id
+                    )
+                    if row:
+                        return dict(row)
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(
+                    "SELECT user_id, username, full_name FROM known_users WHERE user_id = ?",
+                    (user_id,)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return {"user_id": row[0], "username": row[1], "full_name": row[2]}
+        except Exception as e:
+            logger.debug(f"get_user_by_id xatosi: {e}")
+        return None
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""
