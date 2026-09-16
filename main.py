@@ -8,7 +8,7 @@ from bot.database import db
 from bot.handlers import register_routers
 from bot.web import start_web_server
 from bot.services.logger import send_log
-from bot.services.scheduler import start_daily_report_scheduler
+from bot.services.scheduler import start_schedulers
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -65,15 +65,16 @@ async def main():
     # Startup hodisasi
     await on_startup(bot)
 
-    # 7. Kunlik hisobot xizmatini ishga tushirish
-    scheduler_task = start_daily_report_scheduler(bot)
+    # 7. Kunlik hisobot va Avto Tungi Rejim xizmatlarini ishga tushirish
+    scheduler_tasks = start_schedulers(bot)
 
     # 8. Polling rejimida botni ishga tushirish
     try:
         await dp.start_polling(bot, allowed_updates=allowed_updates)
     finally:
         logger.info("Bot to'xtatilmoqda...")
-        scheduler_task.cancel()
+        for task in scheduler_tasks:
+            task.cancel()
         await db.close()
         await web_runner.cleanup()
         await bot.session.close()

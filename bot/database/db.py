@@ -98,7 +98,12 @@ class Database:
                         anti_arabic BOOLEAN DEFAULT TRUE,
                         newcomer_media_lock BOOLEAN DEFAULT TRUE,
                         anti_custom_emoji BOOLEAN DEFAULT TRUE,
-                        probation_minutes INT DEFAULT 60
+                        probation_minutes INT DEFAULT 60,
+                        gmt_offset INT DEFAULT 5,
+                        nightmode_auto BOOLEAN DEFAULT FALSE,
+                        nightmode_start_hour INT DEFAULT 23,
+                        nightmode_end_hour INT DEFAULT 7,
+                        last_auto_nightmode_action TEXT DEFAULT NULL
                     );
                 """)
                 await conn.execute("""
@@ -172,7 +177,12 @@ class Database:
                     anti_arabic BOOLEAN DEFAULT 1,
                     newcomer_media_lock BOOLEAN DEFAULT 1,
                     anti_custom_emoji BOOLEAN DEFAULT 1,
-                    probation_minutes INTEGER DEFAULT 60
+                    probation_minutes INTEGER DEFAULT 60,
+                    gmt_offset INTEGER DEFAULT 5,
+                    nightmode_auto BOOLEAN DEFAULT 0,
+                    nightmode_start_hour INTEGER DEFAULT 23,
+                    nightmode_end_hour INTEGER DEFAULT 7,
+                    last_auto_nightmode_action TEXT DEFAULT NULL
                 );
             """)
             await self.sqlite_conn.execute("""
@@ -225,6 +235,11 @@ class Database:
             ("max_warns", "INT DEFAULT 3", "INTEGER DEFAULT 3"),
             ("last_discord_message_id", "BIGINT DEFAULT 0", "INTEGER DEFAULT 0"),
             ("daytime_permissions", "TEXT DEFAULT NULL", "TEXT DEFAULT NULL"),
+            ("gmt_offset", "INT DEFAULT 5", "INTEGER DEFAULT 5"),
+            ("nightmode_auto", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+            ("nightmode_start_hour", "INT DEFAULT 23", "INTEGER DEFAULT 23"),
+            ("nightmode_end_hour", "INT DEFAULT 7", "INTEGER DEFAULT 7"),
+            ("last_auto_nightmode_action", "TEXT DEFAULT NULL", "TEXT DEFAULT NULL"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -329,6 +344,7 @@ class Database:
     # ==================== SOZLAMALAR (CHAT SETTINGS) ====================
     VALID_SETTINGS = {
         "night_mode": False,
+        "nightmode_auto": False,
         "anti_link": True,
         "anti_forward": True,
         "anti_flood": True,
@@ -402,6 +418,9 @@ class Database:
         "auto_delete_seconds": 20,
         "max_warns": 3,
         "last_discord_message_id": 0,
+        "gmt_offset": 5,
+        "nightmode_start_hour": 23,
+        "nightmode_end_hour": 7,
     }
 
     async def get_chat_setting_int(self, chat_id: int, setting_name: str, default: Optional[int] = None) -> int:
@@ -441,6 +460,70 @@ class Database:
                 ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
             """, (chat_id, value))
             await self.sqlite_conn.commit()
+
+    VALID_STR_SETTINGS = {
+        "last_auto_nightmode_action",
+    }
+
+    async def get_chat_setting_str(self, chat_id: int, setting_name: str, default: str = "") -> str:
+        """Muayyan sozlamaning matn (str) qiymatini oladi."""
+        query = f"SELECT {setting_name} FROM chat_settings WHERE chat_id = $1" if self.is_postgres else f"SELECT {setting_name} FROM chat_settings WHERE chat_id = ?"
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    val = await conn.fetchval(query, chat_id)
+                    return str(val) if val is not None else default
+            else:
+                async with self.sqlite_conn.execute(query, (chat_id,)) as cursor:
+                    row = await cursor.fetchone()
+                    return str(row[0]) if row and row[0] is not None else default
+        except Exception:
+            return default
+
+    async def set_chat_setting_str(self, chat_id: int, setting_name: str, value: str):
+        """Muayyan matnli sozlamani o'zgartiradi."""
+        if setting_name not in self.VALID_STR_SETTINGS:
+            return
+
+        if self.is_postgres and self.pg_pool:
+            async with self.pg_pool.acquire() as conn:
+                await conn.execute(f"""
+                    INSERT INTO chat_settings (chat_id, {setting_name})
+                    VALUES ($1, $2)
+                    ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
+                """, chat_id, value)
+        else:
+            await self.sqlite_conn.execute(f"""
+                INSERT INTO chat_settings (chat_id, {setting_name})
+                VALUES (?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
+            """, (chat_id, value))
+            await self.sqlite_conn.commit()
+
+    async def get_gmt_offset(self, chat_id: int) -> int:
+        """Guruh uchun sozlangan GMT mintaqasini oladi (Sukut bo'yicha: GMT+5)."""
+        return await self.get_chat_setting_int(chat_id, "gmt_offset", default=5)
+
+    async def set_gmt_offset(self, chat_id: int, offset: int):
+        """Guruh uchun GMT mintaqasini o'zgartiradi (masalan: +5, +3)."""
+        # Cheklov: -12 dan +14 gacha
+        clamped = max(-12, min(14, offset))
+        await self.set_chat_setting_int(chat_id, "gmt_offset", clamped)
+
+    async def get_auto_nightmode_settings(self, chat_id: int) -> Dict[str, Any]:
+        """Tungi rejim va GMT sozlamalarini to'liq to'plamda oladi."""
+        is_auto = await self.get_chat_setting_bool(chat_id, "nightmode_auto", default=False)
+        gmt = await self.get_gmt_offset(chat_id)
+        start_h = await self.get_chat_setting_int(chat_id, "nightmode_start_hour", default=23)
+        end_h = await self.get_chat_setting_int(chat_id, "nightmode_end_hour", default=7)
+        is_night = await self.get_night_mode(chat_id)
+        return {
+            "auto_enabled": is_auto,
+            "gmt_offset": gmt,
+            "start_hour": start_h,
+            "end_hour": end_h,
+            "is_night": is_night,
+        }
 
     # ==================== TAQIQLANGAN SO'ZLAR (BAD WORDS) ====================
     async def add_bad_word(self, word: str, added_by: int = 0) -> bool:

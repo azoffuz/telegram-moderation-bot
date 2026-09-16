@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Tuple, Dict, Any
 from aiogram import Router, Bot, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -23,6 +23,38 @@ def get_group_target_id() -> int:
     """Sozlamalar saqlanadigan asosiy guruh ID sini oladi."""
     return config.GROUP_ID or 0
 
+def get_now_formatted(gmt_offset: int = 5) -> Tuple[datetime, str, str]:
+    """
+    GMT offset asosida aniq real vaqtni hisoblaydi.
+    Qaytaradi: (now_obj, date_time_str, gmt_str)
+    """
+    sign = "+" if gmt_offset >= 0 else ""
+    gmt_str = f"{sign}{gmt_offset}"
+    tz = timezone(timedelta(hours=gmt_offset))
+    now = datetime.now(tz)
+    dt_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    return now, dt_str, gmt_str
+
+async def render_main_panel_text(user, is_owner: bool) -> str:
+    """Asosiy admin panel matnini real vaqt va avto tungi rejim bilan formatlaydi."""
+    role_text = "👑 Bosh Admin (Owner)" if is_owner else "👮‍♂️ Bot Admini"
+    chat_id = get_group_target_id()
+    gmt_offset = await db.get_gmt_offset(chat_id)
+    _, dt_str, gmt_str = get_now_formatted(gmt_offset)
+    auto_nm = await db.get_chat_setting_bool(chat_id, "nightmode_auto", False)
+    auto_nm_text = "✅ Yoqilgan" if auto_nm else "❌ O'chirilgan"
+
+    return (
+        f"🎛 <b>ADMIN BOSHQARUV PANELI</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Admin:</b> {user.full_name}\n"
+        f"🎖 <b>Darajangiz:</b> {role_text}\n"
+        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+        f"🕒 <b>Jonli Vaqt:</b> <code>{dt_str} (GMT{gmt_str})</code>\n"
+        f"🌙 <b>Avto Tungi Rejim:</b> <code>{auto_nm_text}</code>\n\n"
+        f"Guruh himoyalarini sozlash, adminlarni boshqarish yoki e'lon yuborish uchun quyidagi bo'limlardan birini tanlang:"
+    )
+
 # ==================== KLAWIATURALAR ====================
 def main_panel_keyboard() -> InlineKeyboardMarkup:
     """Asosiy admin panel boshqaruv menyusi."""
@@ -32,7 +64,8 @@ def main_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚙️ Guruh Himoya Qatlamlari", callback_data="panel:settings")
             ],
             [
-                InlineKeyboardButton(text="⏱ Vaqt & Muddat Sozlamalari", callback_data="panel:time_settings")
+                InlineKeyboardButton(text="🌙 Avto Tungi Rejim & GMT", callback_data="panel:auto_nightmode"),
+                InlineKeyboardButton(text="⏱ Boshqa Muddatlar", callback_data="panel:time_settings")
             ],
             [
                 InlineKeyboardButton(text="📝 Taqiqlangan So'zlar", callback_data="panel:badwords:page:1"),
@@ -46,7 +79,7 @@ def main_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📢 Guruhga E'lon Yuborish", callback_data="panel:broadcast")
             ],
             [
-                InlineKeyboardButton(text="🔄 Yangilash", callback_data="panel:main")
+                InlineKeyboardButton(text="🔄 Yangilash (Jonli Vaqt)", callback_data="panel:main")
             ]
         ]
     )
@@ -119,6 +152,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="⚙️ Avto Tungi Rejim & GMT Sozlash",
+                    callback_data="panel:auto_nightmode"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🧹 Xizmat xabarlari: {status_icon(settings.get('service_cleaner', True))}",
                     callback_data="toggle:service_cleaner"
                 )
@@ -162,16 +201,7 @@ async def cmd_admin_panel(message: Message, bot: Bot):
 
     # 3. Lichkada bo'lsa: to'g'ridan-to'g'ri panelni ochamiz
     is_owner = db.is_owner(message.from_user.id)
-    role_text = "👑 Bosh Admin (Owner)" if is_owner else "👮‍♂️ Bot Admini"
-    
-    text = (
-        f"🎛 <b>ADMIN BOSHQARUV PANELI</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Admin:</b> {message.from_user.full_name}\n"
-        f"🎖 <b>Darajangiz:</b> {role_text}\n"
-        f"🆔 <b>ID:</b> <code>{message.from_user.id}</code>\n\n"
-        f"Guruh himoyalarini sozlash, adminlarni boshqarish yoki e'lon yuborish uchun quyidagi bo'limlardan birini tanlang:"
-    )
+    text = await render_main_panel_text(message.from_user, is_owner)
     await message.answer(text, reply_markup=main_panel_keyboard(), parse_mode="HTML")
 
 # Lichkada /start panel bosilganda
@@ -182,16 +212,7 @@ async def cmd_start_deep_link_panel(message: Message):
         return
 
     is_owner = db.is_owner(message.from_user.id)
-    role_text = "👑 Bosh Admin (Owner)" if is_owner else "👮‍♂️ Bot Admini"
-
-    text = (
-        f"🎛 <b>ADMIN BOSHQARUV PANELI</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Admin:</b> {message.from_user.full_name}\n"
-        f"🎖 <b>Darajangiz:</b> {role_text}\n"
-        f"🆔 <b>ID:</b> <code>{message.from_user.id}</code>\n\n"
-        f"Kerakli bo'limni tanlang:"
-    )
+    text = await render_main_panel_text(message.from_user, is_owner)
     await message.answer(text, reply_markup=main_panel_keyboard(), parse_mode="HTML")
 
 # ==================== CALLBACK LAR (PANEL NAVIGATION) ====================
@@ -203,16 +224,7 @@ async def cb_panel_main(callback: CallbackQuery):
         return
 
     is_owner = db.is_owner(callback.from_user.id)
-    role_text = "👑 Bosh Admin (Owner)" if is_owner else "👮‍♂️ Bot Admini"
-
-    text = (
-        f"🎛 <b>ADMIN BOSHQARUV PANELI</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Admin:</b> {callback.from_user.full_name}\n"
-        f"🎖 <b>Darajangiz:</b> {role_text}\n"
-        f"🆔 <b>ID:</b> <code>{callback.from_user.id}</code>\n\n"
-        f"Kerakli bo'limni tanlang:"
-    )
+    text = await render_main_panel_text(callback.from_user, is_owner)
     await callback.message.edit_text(text, reply_markup=main_panel_keyboard(), parse_mode="HTML")
     await callback.answer()
 
@@ -786,6 +798,272 @@ async def cb_set_time(callback: CallbackQuery, bot: Bot):
         f"📊 <b>Yangi qiymat:</b> <code>{val} {conf.get('unit', '')}</code>\n"
         f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
+
+# ==================== AVTOMATIK TUNGI REJIM & GMT SOZLAMALARI ====================
+GMT_PRESETS = [
+    ("🇺🇿 Toshkent (GMT+5)", 5),
+    ("🇷🇺 Moskva (GMT+3)", 3),
+    ("🇹🇷 Istanbul (GMT+3)", 3),
+    ("🇦🇪 Dubay (GMT+4)", 4),
+    ("🇰🇿 Olmaota (GMT+5)", 5),
+    ("🇦🇿 Boku (GMT+4)", 4),
+    ("🇬🇧 London (GMT+0)", 0),
+    ("🇺🇸 Nyu-York (GMT-5)", -5),
+]
+
+async def render_auto_nightmode_menu(chat_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+    """Avto tungi rejim va GMT sozlamalari asosiy menyusi."""
+    conf = await db.get_auto_nightmode_settings(chat_id)
+    gmt_offset = conf["gmt_offset"]
+    _, dt_str, gmt_str = get_now_formatted(gmt_offset)
+
+    auto_status = "✅ YOQILGAN" if conf["auto_enabled"] else "❌ O'CHIRILGAN"
+    group_status = "🌙 YOPIQ (Tungi rejimda)" if conf["is_night"] else "☀️ OCHIQ (Kunduzgi rejimda)"
+    start_h = conf["start_hour"]
+    end_h = conf["end_hour"]
+
+    text = (
+        f"🌙 <b>AVTOMATIK TUNGI REJIM & VAQT (GMT)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🕒 <b>Joriy jonli vaqt:</b> <code>{dt_str}</code>\n"
+        f"🌐 <b>Vaqt mintaqasi:</b> <code>GMT{gmt_str}</code> (O'zbekiston: GMT+5)\n\n"
+        f"🤖 <b>Avto Tungi Rejim:</b> <b>{auto_status}</b>\n"
+        f"🌙 <b>Avto Yopilish vaqti:</b> <code>{start_h:02d}:00</code>\n"
+        f"☀️ <b>Avto Ochilish vaqti:</b> <code>{end_h:02d}:00</code>\n"
+        f"🔒 <b>Hozirgi guruh holati:</b> <b>{group_status}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"ℹ️ <i>Avto rejim yoqilganda bot sozlangan soatda guruhni o'zi yopadi va tongda ochadi. Kunduzgi media taqiqlari (0/10) to'liq saqlanadi!</i>"
+    )
+
+    auto_btn_text = "🤖 Avto Rejim: 🟢 O'chirish" if conf["auto_enabled"] else "🤖 Avto Rejim: 🔴 Yoqish"
+    instant_toggle_text = "☀️ Hozir Guruhni Ochish" if conf["is_night"] else "🌙 Hozir Guruhni Yopish"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=auto_btn_text, callback_data="nm:toggle_auto")
+            ],
+            [
+                InlineKeyboardButton(text="➖ 1 soat", callback_data="nm:adj_gmt:-1"),
+                InlineKeyboardButton(text=f"🌐 GMT {gmt_str} (Ro'yxat)", callback_data="nm:gmt_presets"),
+                InlineKeyboardButton(text="➕ 1 soat", callback_data="nm:adj_gmt:+1"),
+            ],
+            [
+                InlineKeyboardButton(text=f"🌙 Yopish: {start_h:02d}:00", callback_data="nm:pick_start"),
+                InlineKeyboardButton(text=f"☀️ Ochish: {end_h:02d}:00", callback_data="nm:pick_end"),
+            ],
+            [
+                InlineKeyboardButton(text=instant_toggle_text, callback_data="nm:instant_toggle")
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Jonli Vaqtni Yangilash", callback_data="panel:auto_nightmode"),
+                InlineKeyboardButton(text="⬅️ Bosh Menyu", callback_data="panel:main")
+            ]
+        ]
+    )
+    return text, kb
+
+def render_hour_picker_keyboard(action_type: str, current_hour: int) -> InlineKeyboardMarkup:
+    """00:00 dan 23:00 gacha soat tanlash klaviaturasi."""
+    buttons = []
+    for row_start in range(0, 24, 4):
+        row = []
+        for h in range(row_start, row_start + 4):
+            icon = "🔘 " if h == current_hour else ""
+            label = f"{icon}{h:02d}:00"
+            row.append(InlineKeyboardButton(text=label, callback_data=f"nm:set_{action_type}:{h}"))
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:auto_nightmode")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+@router.callback_query(F.data == "panel:auto_nightmode")
+async def cb_panel_auto_nightmode(callback: CallbackQuery):
+    """Avto tungi rejim va GMT boshqaruv menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "nm:toggle_auto")
+async def cb_nm_toggle_auto(callback: CallbackQuery, bot: Bot):
+    """Avto tungi rejimni yoqish / o'chirish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    new_val = await db.toggle_chat_setting(chat_id, "nightmode_auto")
+    status_str = "YOQILDI ✅" if new_val else "O'CHIRILDI ❌"
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer(f"Avto tungi rejim: {status_str}")
+
+    await send_log(
+        bot,
+        f"🤖 <b>AVTO TUNGI REJIM SOZLAMASI O'ZGARDI</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Admin:</b> {callback.from_user.full_name}\n"
+        f"⚙️ <b>Holat:</b> {status_str}"
+    )
+
+@router.callback_query(F.data.startswith("nm:adj_gmt:"))
+async def cb_nm_adj_gmt(callback: CallbackQuery):
+    """GMT offsetni +1 yoki -1 soatga o'zgartirish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    delta = int(callback.data.split(":")[2])
+    chat_id = get_group_target_id()
+    current_gmt = await db.get_gmt_offset(chat_id)
+    new_gmt = current_gmt + delta
+    await db.set_gmt_offset(chat_id, new_gmt)
+
+    sign = "+" if new_gmt >= 0 else ""
+    await callback.answer(f"Vaqt mintaqasi: GMT{sign}{new_gmt}")
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data == "nm:gmt_presets")
+async def cb_nm_gmt_presets(callback: CallbackQuery):
+    """GMT tayyor mintaqalar ro'yxati."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    current_gmt = await db.get_gmt_offset(chat_id)
+
+    buttons = []
+    row = []
+    for label, offset in GMT_PRESETS:
+        btn_label = f"🔘 {label}" if offset == current_gmt else label
+        row.append(InlineKeyboardButton(text=btn_label, callback_data=f"nm:set_gmt:{offset}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:auto_nightmode")])
+
+    text = (
+        f"🌐 <b>VAQT MINTAQASI (GMT) TANLASH:</b>\n\n"
+        f"Joriy mintaqa: <b>GMT{'+' if current_gmt>=0 else ''}{current_gmt}</b>\n"
+        f"<i>Kerakli davlat/mintaqani tanlang:</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("nm:set_gmt:"))
+async def cb_nm_set_gmt(callback: CallbackQuery):
+    """Tanlangan GMT ni saqlash."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    offset = int(callback.data.split(":")[2])
+    chat_id = get_group_target_id()
+    await db.set_gmt_offset(chat_id, offset)
+
+    sign = "+" if offset >= 0 else ""
+    await callback.answer(f"✅ GMT{sign}{offset} saqlandi!", show_alert=False)
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data == "nm:pick_start")
+async def cb_nm_pick_start(callback: CallbackQuery):
+    """Guruhni yopish soatini tanlash."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    conf = await db.get_auto_nightmode_settings(chat_id)
+    kb = render_hour_picker_keyboard("start", conf["start_hour"])
+
+    text = (
+        f"🌙 <b>TUNGI REJIM BOSHLANISH VAQTI (Guruh yopilishi):</b>\n\n"
+        f"Joriy vaqt: <b>{conf['start_hour']:02d}:00</b>\n"
+        f"<i>Guruh har kuni kechasi soat nechida yopilsin?</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "nm:pick_end")
+async def cb_nm_pick_end(callback: CallbackQuery):
+    """Guruhni ochish soatini tanlash."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    conf = await db.get_auto_nightmode_settings(chat_id)
+    kb = render_hour_picker_keyboard("end", conf["end_hour"])
+
+    text = (
+        f"☀️ <b>TUNGI REJIM TUGASH VAQTI (Guruh ochilishi):</b>\n\n"
+        f"Joriy vaqt: <b>{conf['end_hour']:02d}:00</b>\n"
+        f"<i>Guruh har kuni ertalab soat nechida ochilsin?</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("nm:set_start:"))
+async def cb_nm_set_start(callback: CallbackQuery):
+    """Boshlanish soatini saqlash."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    hour = int(callback.data.split(":")[2])
+    chat_id = get_group_target_id()
+    await db.set_chat_setting_int(chat_id, "nightmode_start_hour", hour)
+    await callback.answer(f"✅ Yopilish vaqti: {hour:02d}:00", show_alert=False)
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("nm:set_end:"))
+async def cb_nm_set_end(callback: CallbackQuery):
+    """Tugash soatini saqlash."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    hour = int(callback.data.split(":")[2])
+    chat_id = get_group_target_id()
+    await db.set_chat_setting_int(chat_id, "nightmode_end_hour", hour)
+    await callback.answer(f"✅ Ochilish vaqti: {hour:02d}:00", show_alert=False)
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data == "nm:instant_toggle")
+async def cb_nm_instant_toggle(callback: CallbackQuery, bot: Bot):
+    """Hozirgi guruh holatini darhol almashtirish (Yopish / Ochish)."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    from bot.handlers.nightmode import apply_night_mode_permissions
+    new_val = await db.toggle_chat_setting(chat_id, "night_mode")
+    await apply_night_mode_permissions(bot, chat_id, enable=new_val)
+    await log_night_mode(bot, callback.from_user, enabled=new_val)
+
+    status_str = "🌙 Guruh yopildi" if new_val else "☀️ Guruh ochildi"
+    await callback.answer(f"{status_str}!", show_alert=True)
+
+    text, kb = await render_auto_nightmode_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 # ==================== BARCHA BUYRUQLAR QO'LLANMASI ====================
 COMMANDS_GUIDE_TEXT = (
