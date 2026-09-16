@@ -150,6 +150,20 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     text = message.text or message.caption or ""
 
     # -------------------------------------------------------------
+    # NOQONUNIY / BEGONA BARCHA SLASH BUYRUQLARNI DARHOL O'CHIRISH
+    # -------------------------------------------------------------
+    # Oddiy a'zolar guruhda yuborgan har qanday slash bilan boshlanuvchi buyruqlarni (/...) o'chiramiz
+    is_slash_cmd = text.strip().startswith("/") or any(
+        e.type == MessageEntityType.BOT_COMMAND for e in (message.entities or [])
+    )
+    if is_slash_cmd:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    # -------------------------------------------------------------
     # 1. ANTI-FLOOD / SPAM NAZORATI
     # -------------------------------------------------------------
     if await db.get_chat_setting_bool(chat_id, "anti_flood", default=True):

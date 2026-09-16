@@ -13,13 +13,18 @@ router = Router(name="user_commands")
 
 # ==================== /rules ====================
 @router.message(Command("rules"), IsGroupFilter())
-async def cmd_rules(message: Message):
+async def cmd_rules(message: Message, bot: Bot):
     """Guruh qoidalarini ko'rsatish."""
-    rules_msg = await message.reply(
-        config.RULES_TEXT,
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    rules_msg = await bot.send_message(
+        chat_id=message.chat.id,
+        text=config.RULES_TEXT,
         parse_mode="HTML"
     )
-    auto_delete(message, delay=30)
     auto_delete(rules_msg, delay=45)
 
 # ==================== /discord ====================
@@ -76,9 +81,10 @@ async def cmd_discord(message: Message, bot: Bot):
 async def cmd_report(message: Message, bot: Bot):
     """Foydalanuvchilar spamlarni adminga xabar berishi uchun."""
     if not message.reply_to_message:
-        msg = await message.reply("ℹ️ Qoidabuzar xabarga reply qilib <code>/report [sabab]</code> deb yozing.")
-        auto_delete(message, 10)
-        auto_delete(msg, 10)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     reported_msg = message.reply_to_message
@@ -104,12 +110,17 @@ async def cmd_report(message: Message, bot: Bot):
         reason=reason
     )
 
-    confirm_msg = await message.reply(
-        "✅ <b>Rahmat!</b> Sizning shikoyatingiz guruh moderatorlariga va log kanalga yetkazildi.",
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    confirm_msg = await bot.send_message(
+        chat_id=message.chat.id,
+        text="✅ <b>Rahmat!</b> Sizning shikoyatingiz guruh moderatorlariga yetkazildi.",
         parse_mode="HTML"
     )
-    auto_delete(message, 10)
-    auto_delete(confirm_msg, 10)
+    auto_delete(confirm_msg, 5)
 
 # ==================== /start (Lichkada) ====================
 @router.message(CommandStart())
