@@ -32,6 +32,7 @@ class Database:
         self._known_users_cache: Dict[int, Tuple[float, Optional[str], str]] = {}
         self._tracked_members_cache: Set[Tuple[int, int]] = set()
         self._newcomers_cache: Dict[Tuple[int, int], Optional[datetime]] = {}
+        self._log_threads_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
     async def connect(self):
         """Ma'lumotlar bazasiga ulanish va jadvallarni yaratish."""
@@ -266,6 +267,33 @@ class Database:
                     await self.sqlite_conn.commit()
             except Exception:
                 pass
+
+        # log_threads jadvalini yaratish (mavjud bazalar uchun ham)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS log_threads (
+                            category TEXT PRIMARY KEY,
+                            channel_id BIGINT,
+                            thread_id BIGINT,
+                            thread_name TEXT,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS log_threads (
+                        category TEXT PRIMARY KEY,
+                        channel_id INTEGER,
+                        thread_id INTEGER,
+                        thread_name TEXT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                await self.sqlite_conn.commit()
+        except Exception:
+            pass
 
     async def _seed_default_bad_words(self):
         """Baza bo'sh bo'lsa standart taqiqlangan so'zlarni kiritadi."""
@@ -1141,6 +1169,92 @@ class Database:
         except Exception as e:
             logger.debug(f"get_all_known_user_ids xatosi: {e}")
         return list(ids)
+
+    # ==================== LOG MAVZULARI (FORUM THREADS) ====================
+    async def _load_log_threads_cache(self):
+        """Barcha sozlangan log threadlarini RAM keshga yuklaydi."""
+        threads = {}
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT category, channel_id, thread_id, thread_name FROM log_threads")
+                    for r in rows:
+                        threads[r["category"]] = {
+                            "channel_id": r["channel_id"],
+                            "thread_id": r["thread_id"],
+                            "thread_name": r["thread_name"] or ""
+                        }
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("SELECT category, channel_id, thread_id, thread_name FROM log_threads") as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        threads[r[0]] = {
+                            "channel_id": r[1],
+                            "thread_id": r[2],
+                            "thread_name": r[3] or ""
+                        }
+        except Exception as e:
+            logger.debug(f"_load_log_threads_cache xatosi: {e}")
+        self._log_threads_cache = threads
+
+    async def set_log_thread(self, category: str, channel_id: int, thread_id: int, thread_name: str = ""):
+        """Kategoriya uchun log mavzusi (thread) ID sini saqlaydi va keshni yangilaydi."""
+        if self._log_threads_cache is None:
+            await self._load_log_threads_cache()
+        self._log_threads_cache[category] = {
+            "channel_id": channel_id,
+            "thread_id": thread_id,
+            "thread_name": thread_name
+        }
+
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO log_threads (category, channel_id, thread_id, thread_name, updated_at)
+                        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                        ON CONFLICT (category) DO UPDATE
+                        SET channel_id = $2, thread_id = $3, thread_name = $4, updated_at = CURRENT_TIMESTAMP
+                    """, category, channel_id, thread_id, thread_name)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO log_threads (category, channel_id, thread_id, thread_name, updated_at)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(category) DO UPDATE
+                    SET channel_id = excluded.channel_id, thread_id = excluded.thread_id,
+                        thread_name = excluded.thread_name, updated_at = CURRENT_TIMESTAMP
+                """, (category, channel_id, thread_id, thread_name))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"set_log_thread xatosi: {e}")
+
+    async def get_log_thread(self, category: str) -> Optional[Tuple[int, int]]:
+        """Kategoriya uchun (channel_id, thread_id) juftligini oladi (RAM keshdan, 0ms)."""
+        if self._log_threads_cache is None:
+            await self._load_log_threads_cache()
+        item = self._log_threads_cache.get(category)
+        if item and item.get("thread_id"):
+            return (item["channel_id"], item["thread_id"])
+        return None
+
+    async def get_all_log_threads(self) -> Dict[str, Dict[str, Any]]:
+        """Barcha saqlangan log threadlarini oladi."""
+        if self._log_threads_cache is None:
+            await self._load_log_threads_cache()
+        return dict(self._log_threads_cache)
+
+    async def clear_log_threads(self):
+        """Barcha log mavzularini tozalaydi."""
+        self._log_threads_cache = {}
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("DELETE FROM log_threads")
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("DELETE FROM log_threads")
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"clear_log_threads xatosi: {e}")
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""

@@ -251,7 +251,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                     f"👤 <b>Foydalanuvchi:</b> <a href=\"tg://user?id={user.id}\">{user.full_name}</a>\n"
                     f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                     f"💬 <b>Guruh:</b> {message.chat.title}\n"
-                    f"ℹ️ <b>Holat:</b> Sinov davrida media yuborishga urindi"
+                    f"ℹ️ <b>Holat:</b> Sinov davrida media yuborishga urindi",
+                    category="spam"
                 ))
                 return
 
@@ -320,7 +321,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
                 f"🔍 <b>Ushlangan so'z:</b> <code>{detected_word}</code>\n"
-                f"📝 <b>Matn:</b> <i>{clean_preview}</i>"
+                f"📝 <b>Matn:</b> <i>{clean_preview}</i>",
+                category="badwords"
             ))
             return
 
@@ -349,7 +351,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"👤 <b>Foydalanuvchi:</b> <a href=\"tg://user?id={user.id}\">{user.full_name}</a>\n"
                 f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
-                f"📝 <b>Matn:</b> <i>{clean_preview}</i>"
+                f"📝 <b>Matn:</b> <i>{clean_preview}</i>",
+                category="spam"
             ))
             return
 
@@ -375,7 +378,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"👤 <b>Foydalanuvchi:</b> <a href=\"tg://user?id={user.id}\">{user.full_name}</a>\n"
                 f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
-                f"ℹ️ <b>Sabab:</b> Xabarda Telegram Premium (custom emoji) ishlatilgan"
+                f"ℹ️ <b>Sabab:</b> Xabarda Telegram Premium (custom emoji) ishlatilgan",
+                category="spam"
             ))
             return
 

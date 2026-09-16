@@ -76,7 +76,8 @@ def main_panel_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📖 Buyruqlar Qo'llanmasi", callback_data="panel:commands_guide")
             ],
             [
-                InlineKeyboardButton(text="📢 Guruhga E'lon Yuborish", callback_data="panel:broadcast")
+                InlineKeyboardButton(text="🧵 Log Mavzulari (Topics)", callback_data="panel:log_threads"),
+                InlineKeyboardButton(text="📢 Guruhga E'lon", callback_data="panel:broadcast")
             ],
             [
                 InlineKeyboardButton(text="🔄 Yangilash (Jonli Vaqt)", callback_data="panel:main")
@@ -1094,6 +1095,10 @@ COMMANDS_GUIDE_TEXT = (
     "• <code>/words</code> — Barcha taqiqlangan so'zlarni ko'rish.\n"
     "• <code>/nightmode on/off</code> — Tungi rejimni yoqish/o'chirish.\n"
     "• <code>/dailyreport</code> — Bugungi jonli moderatsiya hisoboti.\n"
+    "• <code>/setup_threads</code> — Admin guruhida barcha log mavzularini (topics) avtomatik ochish.\n"
+    "• <code>/threads</code> — Sozlangan log mavzulari holatini ko'rish.\n"
+    "• <code>/set_moderation</code>, <code>/set_reports</code>, <code>/set_badwords</code>, <code>/set_spam</code>, <code>/set_members</code>, <code>/set_system</code> — Mavzu ichida sozlash.\n"
+    "• <code>/reset_threads</code> — Barcha mavzular ulanishini tozalash.\n"
     "• <code>/addadmin &lt;ID&gt;</code> — Botga yangi admin qo'shish (faqat Bot Egasi).\n"
     "• <code>/deladmin &lt;ID&gt;</code> — Adminni olib tashlash.\n"
     "• <code>/admins</code> — Barcha bot adminlari ro'yxati.\n\n"
@@ -1103,6 +1108,53 @@ COMMANDS_GUIDE_TEXT = (
     "• <code>/report [sabab]</code> — Qoidabuzar xabariga reply qilib adminlarga shikoyat qilish.\n"
     "• <code>/help</code> yoki <code>/commands</code> — Barcha buyruqlar ro'yxati.\n"
 )
+
+@router.callback_query(F.data == "panel:log_threads")
+async def cb_panel_log_threads(callback: CallbackQuery):
+    """Log mavzulari (Topics / Threads) ko'rinishi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    all_threads = await db.get_all_log_threads()
+    from bot.handlers.log_threads import TOPIC_CONFIGS
+
+    text = (
+        "🧵 <b>ADMIN GURUHI LOG MAVZULARI (FORUM TOPICS)</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        "Guruhda turli hodisalar uchun alohida mavzular:\n\n"
+    )
+
+    for cat_key, conf in TOPIC_CONFIGS.items():
+        th = all_threads.get(cat_key)
+        if th and th.get("thread_id"):
+            text += f"✅ <b>{conf['name']}:</b> ID <code>{th['thread_id']}</code> (Guruh: <code>{th['channel_id']}</code>)\n"
+        else:
+            text += f"⚪️ <b>{conf['name']}:</b> <i>Ulanmagan (Umumiy log chatga boradi)</i>\n"
+
+    text += (
+        "\n💡 <b>Qanday sozlanadi?</b>\n"
+        "1️⃣ <b>1 ta buyruq bilan avto ochish:</b>\n"
+        "Admin/Log guruhida <code>/setup_threads</code> deb yozing, bot barcha 6 ta mavzuni o'zi yaratadi.\n\n"
+        "2️⃣ <b>Qo'lda mavzu ichida sozlash:</b>\n"
+        "Guruhdagi kerakli mavzu ichiga kirib, quyidagi buyruqlarni yuboring:\n"
+        "• <code>/set_moderation</code> — Jazo choralari\n"
+        "• <code>/set_spam</code> — Filtr va spamlarlar\n"
+        "• <code>/set_badwords</code> — Taqiqlangan so'zlar\n"
+        "• <code>/set_reports</code> — Shikoyatlar\n"
+        "• <code>/set_members</code> — A'zolar va Captcha\n"
+        "• <code>/set_system</code> — Kunlik hisobot va Tungi rejim\n\n"
+        "Tozalash uchun: <code>/reset_threads</code>"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Yangilash", callback_data="panel:log_threads")],
+            [InlineKeyboardButton(text="⬅️ Bosh Menyu", callback_data="panel:main")]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
 
 @router.callback_query(F.data == "panel:commands_guide")
 async def cb_panel_commands_guide(callback: CallbackQuery):
