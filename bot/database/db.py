@@ -1,7 +1,8 @@
 import logging
 import re
+import time
 from datetime import datetime, date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set, Tuple
 import aiosqlite
 import asyncpg
 from bot.config import config
@@ -21,6 +22,17 @@ class Database:
         self.sqlite_path: str = "moderation.db"
         self.sqlite_conn: Optional[aiosqlite.Connection] = None
 
+        # Tezkor In-Memory Keshlar (Latency va DB yuklamasini 99% ga kamaytirish uchun)
+        self._settings_cache: Dict[int, Dict[str, Any]] = {}
+        self._settings_cache_ts: Dict[int, float] = {}
+        self._bot_admins_cache: Optional[Set[int]] = None
+        self._bad_words_cache: Optional[List[str]] = None
+        self._bad_words_bounded_regex: Optional[re.Pattern] = None
+        self._bad_words_unbounded_regex: Optional[re.Pattern] = None
+        self._known_users_cache: Dict[int, Tuple[float, Optional[str], str]] = {}
+        self._tracked_members_cache: Set[Tuple[int, int]] = set()
+        self._newcomers_cache: Dict[Tuple[int, int], Optional[datetime]] = {}
+
     async def connect(self):
         """Ma'lumotlar bazasiga ulanish va jadvallarni yaratish."""
         db_url = config.DATABASE_URL
@@ -36,8 +48,8 @@ class Database:
             try:
                 self.pg_pool = await asyncpg.create_pool(
                     dsn=db_url,
-                    min_size=1,
-                    max_size=5,
+                    min_size=2,
+                    max_size=10,
                     statement_cache_size=0
                 )
                 logger.info("Supabase (PostgreSQL) bazasiga muvaffaqiyatli ulandi.")
@@ -47,8 +59,8 @@ class Database:
                     self.pg_pool = await asyncpg.create_pool(
                         dsn=db_url,
                         ssl="require",
-                        min_size=1,
-                        max_size=5,
+                        min_size=2,
+                        max_size=10,
                         statement_cache_size=0
                     )
                     logger.info("Supabase (PostgreSQL) bazasiga SSL bilan muvaffaqiyatli ulandi.")
@@ -264,23 +276,33 @@ class Database:
         """Foydalanuvchi asosiy bosh admin (Owner) ekanligini tekshiradi."""
         return user_id in config.ADMIN_IDS
 
+    async def _load_bot_admins_cache(self):
+        """Barcha bot adminlari ID larini in-memory set keshiga yuklaydi."""
+        admin_ids = set()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT user_id FROM bot_admins")
+                    for r in rows:
+                        admin_ids.add(r["user_id"])
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("SELECT user_id FROM bot_admins") as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        admin_ids.add(r[0])
+        except Exception as e:
+            logger.debug(f"_load_bot_admins_cache xatosi: {e}")
+        self._bot_admins_cache = admin_ids
+
     async def is_bot_admin(self, user_id: int) -> bool:
-        """Foydalanuvchi Owner yoki bot orqali tayinlangan admin ekanligini tekshiradi."""
+        """Foydalanuvchi Owner yoki bot orqali tayinlangan admin ekanligini tezkor RAM keshdan tekshiradi (0ms)."""
         if self.is_owner(user_id):
             return True
 
-        if self.is_postgres and self.pg_pool:
-            async with self.pg_pool.acquire() as conn:
-                val = await conn.fetchval(
-                    "SELECT user_id FROM bot_admins WHERE user_id = $1", user_id
-                )
-                return val is not None
-        else:
-            async with self.sqlite_conn.execute(
-                "SELECT user_id FROM bot_admins WHERE user_id = ?", (user_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row is not None
+        if self._bot_admins_cache is None:
+            await self._load_bot_admins_cache()
+
+        return user_id in self._bot_admins_cache
 
     async def add_bot_admin(self, user_id: int, added_by: int, title: str = "Admin") -> bool:
         """Yangi bot adminini qo'shadi."""
@@ -299,20 +321,28 @@ class Database:
                 ON CONFLICT(user_id) DO UPDATE SET title = excluded.title
             """, (user_id, added_by, now, title))
             await self.sqlite_conn.commit()
+
+        if self._bot_admins_cache is not None:
+            self._bot_admins_cache.add(user_id)
         return True
 
     async def remove_bot_admin(self, user_id: int) -> bool:
         """Bot adminini o'chiradi."""
+        success = False
         if self.is_postgres and self.pg_pool:
             async with self.pg_pool.acquire() as conn:
                 res = await conn.execute("DELETE FROM bot_admins WHERE user_id = $1", user_id)
-                return "DELETE 1" in res
+                success = "DELETE 1" in res
         else:
             async with self.sqlite_conn.execute(
                 "DELETE FROM bot_admins WHERE user_id = ?", (user_id,)
             ) as cursor:
                 await self.sqlite_conn.commit()
-                return cursor.rowcount > 0
+                success = cursor.rowcount > 0
+
+        if success and self._bot_admins_cache is not None:
+            self._bot_admins_cache.discard(user_id)
+        return success
 
     async def get_all_bot_admins(self) -> List[Dict[str, Any]]:
         """Barcha qo'shilgan bot adminlarini ro'yxatini qaytaradi."""
@@ -356,46 +386,72 @@ class Database:
         "anti_custom_emoji": True,
     }
 
-    async def get_chat_setting_bool(self, chat_id: int, setting_name: str, default: bool = True) -> bool:
-        """Muayyan sozlamaning boolean holatini oladi."""
-        if setting_name not in self.VALID_SETTINGS:
-            return default
+    async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:
+        """Guruhning barcha sozlamalarini tezkor RAM keshdan yoki bitta DB so'rov bilan oladi."""
+        now = time.time()
+        if chat_id in self._settings_cache and (now - self._settings_cache_ts.get(chat_id, 0) < 60):
+            return dict(self._settings_cache[chat_id])
 
-        query = f"SELECT {setting_name} FROM chat_settings WHERE chat_id = $1" if self.is_postgres else f"SELECT {setting_name} FROM chat_settings WHERE chat_id = ?"
-        
+        res = dict(self.VALID_SETTINGS)
+        res.update(self.VALID_INT_SETTINGS)
+        res["last_auto_nightmode_action"] = ""
+
+        query = "SELECT * FROM chat_settings WHERE chat_id = $1" if self.is_postgres else "SELECT * FROM chat_settings WHERE chat_id = ?"
         try:
             if self.is_postgres and self.pg_pool:
                 async with self.pg_pool.acquire() as conn:
-                    val = await conn.fetchval(query, chat_id)
-                    return bool(val) if val is not None else default
-            else:
+                    row = await conn.fetchrow(query, chat_id)
+                    if row:
+                        for k in row.keys():
+                            if k != "chat_id" and row[k] is not None:
+                                res[k] = row[k]
+            elif self.sqlite_conn:
+                self.sqlite_conn.row_factory = aiosqlite.Row
                 async with self.sqlite_conn.execute(query, (chat_id,)) as cursor:
                     row = await cursor.fetchone()
-                    return bool(row[0]) if row and row[0] is not None else default
-        except Exception:
-            return default
+                    if row:
+                        for k in row.keys():
+                            if k != "chat_id" and row[k] is not None:
+                                res[k] = row[k]
+        except Exception as e:
+            logger.debug(f"get_all_chat_settings xatosi: {e}")
+
+        self._settings_cache[chat_id] = res
+        self._settings_cache_ts[chat_id] = now
+        return dict(res)
+
+    async def get_chat_setting_bool(self, chat_id: int, setting_name: str, default: bool = True) -> bool:
+        """Muayyan sozlamaning boolean holatini oladi (RAM keshdan, 0ms)."""
+        settings = await self.get_all_chat_settings(chat_id)
+        return bool(settings.get(setting_name, default))
 
     async def set_chat_setting_bool(self, chat_id: int, setting_name: str, value: bool):
-        """Muayyan sozlamani o'zgartiradi."""
+        """Muayyan sozlamani o'zgartiradi va keshni yangilaydi."""
         if setting_name not in self.VALID_SETTINGS:
             return
 
-        val = value if self.is_postgres else (1 if value else 0)
+        # RAM keshni tezda yangilaymiz (0ms delay)
+        if chat_id in self._settings_cache:
+            self._settings_cache[chat_id][setting_name] = value
 
-        if self.is_postgres and self.pg_pool:
-            async with self.pg_pool.acquire() as conn:
-                await conn.execute(f"""
+        val = value if self.is_postgres else (1 if value else 0)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute(f"""
+                        INSERT INTO chat_settings (chat_id, {setting_name})
+                        VALUES ($1, $2)
+                        ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
+                    """, chat_id, val)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute(f"""
                     INSERT INTO chat_settings (chat_id, {setting_name})
-                    VALUES ($1, $2)
-                    ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
-                """, chat_id, val)
-        else:
-            await self.sqlite_conn.execute(f"""
-                INSERT INTO chat_settings (chat_id, {setting_name})
-                VALUES (?, ?)
-                ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
-            """, (chat_id, val))
-            await self.sqlite_conn.commit()
+                    VALUES (?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
+                """, (chat_id, val))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"set_chat_setting_bool xatosi: {e}")
 
     async def toggle_chat_setting(self, chat_id: int, setting_name: str) -> bool:
         """Sozlamani ON -> OFF yoki OFF -> ON qilib, yangi qiymatini qaytaradi."""
@@ -403,13 +459,6 @@ class Database:
         new_val = not current
         await self.set_chat_setting_bool(chat_id, setting_name, new_val)
         return new_val
-
-    async def get_all_chat_settings(self, chat_id: int) -> Dict[str, bool]:
-        """Guruhning barcha sozlamalarini lug'at ko'rinishida qaytaradi."""
-        res = {}
-        for k, def_val in self.VALID_SETTINGS.items():
-            res[k] = await self.get_chat_setting_bool(chat_id, k, def_val)
-        return res
 
     VALID_INT_SETTINGS = {
         "probation_minutes": 60,
@@ -424,81 +473,78 @@ class Database:
     }
 
     async def get_chat_setting_int(self, chat_id: int, setting_name: str, default: Optional[int] = None) -> int:
-        """Muayyan sozlamaning butun son (int) qiymatini oladi."""
+        """Muayyan sozlamaning butun son (int) qiymatini oladi (RAM keshdan)."""
         if default is None:
             default = self.VALID_INT_SETTINGS.get(setting_name, 0)
 
-        query = f"SELECT {setting_name} FROM chat_settings WHERE chat_id = $1" if self.is_postgres else f"SELECT {setting_name} FROM chat_settings WHERE chat_id = ?"
+        settings = await self.get_all_chat_settings(chat_id)
+        val = settings.get(setting_name, default)
         try:
-            if self.is_postgres and self.pg_pool:
-                async with self.pg_pool.acquire() as conn:
-                    val = await conn.fetchval(query, chat_id)
-                    return int(val) if val is not None else default
-            else:
-                async with self.sqlite_conn.execute(query, (chat_id,)) as cursor:
-                    row = await cursor.fetchone()
-                    return int(row[0]) if row and row[0] is not None else default
+            return int(val) if val is not None else default
         except Exception:
             return default
 
     async def set_chat_setting_int(self, chat_id: int, setting_name: str, value: int):
-        """Muayyan butun sonli sozlamani o'zgartiradi."""
+        """Muayyan butun sonli sozlamani o'zgartiradi va keshni yangilaydi."""
         if setting_name not in self.VALID_INT_SETTINGS:
             return
 
-        if self.is_postgres and self.pg_pool:
-            async with self.pg_pool.acquire() as conn:
-                await conn.execute(f"""
+        if chat_id in self._settings_cache:
+            self._settings_cache[chat_id][setting_name] = value
+
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute(f"""
+                        INSERT INTO chat_settings (chat_id, {setting_name})
+                        VALUES ($1, $2)
+                        ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
+                    """, chat_id, value)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute(f"""
                     INSERT INTO chat_settings (chat_id, {setting_name})
-                    VALUES ($1, $2)
-                    ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
-                """, chat_id, value)
-        else:
-            await self.sqlite_conn.execute(f"""
-                INSERT INTO chat_settings (chat_id, {setting_name})
-                VALUES (?, ?)
-                ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
-            """, (chat_id, value))
-            await self.sqlite_conn.commit()
+                    VALUES (?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
+                """, (chat_id, value))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"set_chat_setting_int xatosi: {e}")
 
     VALID_STR_SETTINGS = {
         "last_auto_nightmode_action",
     }
 
     async def get_chat_setting_str(self, chat_id: int, setting_name: str, default: str = "") -> str:
-        """Muayyan sozlamaning matn (str) qiymatini oladi."""
-        query = f"SELECT {setting_name} FROM chat_settings WHERE chat_id = $1" if self.is_postgres else f"SELECT {setting_name} FROM chat_settings WHERE chat_id = ?"
-        try:
-            if self.is_postgres and self.pg_pool:
-                async with self.pg_pool.acquire() as conn:
-                    val = await conn.fetchval(query, chat_id)
-                    return str(val) if val is not None else default
-            else:
-                async with self.sqlite_conn.execute(query, (chat_id,)) as cursor:
-                    row = await cursor.fetchone()
-                    return str(row[0]) if row and row[0] is not None else default
-        except Exception:
-            return default
+        """Muayyan sozlamaning matn (str) qiymatini oladi (RAM keshdan)."""
+        settings = await self.get_all_chat_settings(chat_id)
+        val = settings.get(setting_name, default)
+        return str(val) if val is not None else default
 
     async def set_chat_setting_str(self, chat_id: int, setting_name: str, value: str):
-        """Muayyan matnli sozlamani o'zgartiradi."""
+        """Muayyan matnli sozlamani o'zgartiradi va keshni yangilaydi."""
         if setting_name not in self.VALID_STR_SETTINGS:
             return
 
-        if self.is_postgres and self.pg_pool:
-            async with self.pg_pool.acquire() as conn:
-                await conn.execute(f"""
+        if chat_id in self._settings_cache:
+            self._settings_cache[chat_id][setting_name] = value
+
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute(f"""
+                        INSERT INTO chat_settings (chat_id, {setting_name})
+                        VALUES ($1, $2)
+                        ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
+                    """, chat_id, value)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute(f"""
                     INSERT INTO chat_settings (chat_id, {setting_name})
-                    VALUES ($1, $2)
-                    ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
-                """, chat_id, value)
-        else:
-            await self.sqlite_conn.execute(f"""
-                INSERT INTO chat_settings (chat_id, {setting_name})
-                VALUES (?, ?)
-                ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
-            """, (chat_id, value))
-            await self.sqlite_conn.commit()
+                    VALUES (?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
+                """, (chat_id, value))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"set_chat_setting_str xatosi: {e}")
 
     async def get_gmt_offset(self, chat_id: int) -> int:
         """Guruh uchun sozlangan GMT mintaqasini oladi (Sukut bo'yicha: GMT+5)."""
@@ -526,8 +572,43 @@ class Database:
         }
 
     # ==================== TAQIQLANGAN SO'ZLAR (BAD WORDS) ====================
+    def _rebuild_bad_words_regex(self):
+        """Taqiqlangan so'zlardan oldindan kompilyatsiya qilingan tezkor regex yasaydi."""
+        if not self._bad_words_cache:
+            self._bad_words_bounded_regex = None
+            self._bad_words_unbounded_regex = None
+            return
+
+        letters_pattern = r'[a-zA-Zа-яА-ЯёЁўқғҳЎҚҒҲ0-9]'
+        bounded_words = []
+        unbounded_words = []
+
+        for w in self._bad_words_cache:
+            w_clean = w.strip().lower()
+            if not w_clean or len(w_clean) < 2:
+                continue
+            esc = re.escape(w_clean)
+            if len(w_clean) < 5 or ' ' in w_clean:
+                bounded_words.append(esc)
+            else:
+                unbounded_words.append(esc)
+
+        if bounded_words:
+            # So'zning oldidan ham, ketidan ham harf kelmasligi SHART (salam, tamom, yordam xato o'chmasligi uchun)
+            p_bounded = rf'(?<!{letters_pattern})(?:{"|".join(bounded_words)})(?!{letters_pattern})'
+            self._bad_words_bounded_regex = re.compile(p_bounded, re.IGNORECASE)
+        else:
+            self._bad_words_bounded_regex = None
+
+        if unbounded_words:
+            # Oldidan harf kelmasligi shart, orqasidan esa qo'shimcha (1xbetda, jalablar) kelishi mumkin
+            p_unbounded = rf'(?<!{letters_pattern})(?:{"|".join(unbounded_words)})'
+            self._bad_words_unbounded_regex = re.compile(p_unbounded, re.IGNORECASE)
+        else:
+            self._bad_words_unbounded_regex = None
+
     async def add_bad_word(self, word: str, added_by: int = 0) -> bool:
-        """Taqiqlangan so'z qo'shadi."""
+        """Taqiqlangan so'z qo'shadi va keshni yangilaydi."""
         cleaned_word = word.strip().lower()
         if not cleaned_word:
             return False
@@ -545,22 +626,37 @@ class Database:
                 VALUES (?, ?, ?)
             """, (cleaned_word, added_by, now))
             await self.sqlite_conn.commit()
+
+        if self._bad_words_cache is not None and cleaned_word not in self._bad_words_cache:
+            self._bad_words_cache.append(cleaned_word)
+            self._bad_words_cache.sort()
+            self._rebuild_bad_words_regex()
         return True
 
     async def remove_bad_word(self, word: str) -> bool:
-        """Taqiqlangan so'zni o'chiradi."""
+        """Taqiqlangan so'zni o'chiradi va keshni yangilaydi."""
         cleaned_word = word.strip().lower()
+        success = False
         if self.is_postgres and self.pg_pool:
             async with self.pg_pool.acquire() as conn:
                 res = await conn.execute("DELETE FROM bad_words WHERE word = $1", cleaned_word)
-                return "DELETE 1" in res
+                success = "DELETE 1" in res
         else:
             async with self.sqlite_conn.execute("DELETE FROM bad_words WHERE word = ?", (cleaned_word,)) as cursor:
                 await self.sqlite_conn.commit()
-                return cursor.rowcount > 0
+                success = cursor.rowcount > 0
+
+        if success and self._bad_words_cache is not None:
+            if cleaned_word in self._bad_words_cache:
+                self._bad_words_cache.remove(cleaned_word)
+                self._rebuild_bad_words_regex()
+        return success
 
     async def get_all_bad_words(self) -> List[str]:
-        """Barcha taqiqlangan so'zlar ro'yxatini qaytaradi."""
+        """Barcha taqiqlangan so'zlar ro'yxatini qaytaradi (RAM keshdan, 0ms)."""
+        if self._bad_words_cache is not None:
+            return list(self._bad_words_cache)
+
         words = []
         if self.is_postgres and self.pg_pool:
             async with self.pg_pool.acquire() as conn:
@@ -570,38 +666,35 @@ class Database:
             async with self.sqlite_conn.execute("SELECT word FROM bad_words ORDER BY word ASC") as cursor:
                 rows = await cursor.fetchall()
                 words = [r[0] for r in rows]
-        return words
+
+        self._bad_words_cache = words
+        self._rebuild_bad_words_regex()
+        return list(words)
 
     async def check_bad_words_in_text(self, text: str) -> Optional[str]:
-        """Matnda taqiqlangan so'z borligini tekshiradi va topilgan so'zni qaytaradi."""
+        """Matnda taqiqlangan so'z borligini tezkor pre-compiled regex bilan tekshiradi (0.05ms)."""
         if not text:
             return None
-        words = await self.get_all_bad_words()
-        if not words:
+
+        if self._bad_words_cache is None:
+            await self.get_all_bad_words()
+
+        if not self._bad_words_bounded_regex and not self._bad_words_unbounded_regex:
             return None
 
         lowered = text.lower()
         # 3 ta va undan ortiq takrorlangan harflarni siqish (masalan: aaaam -> am, saloooom -> salom)
         compressed = re.sub(r'([a-zA-Zа-яА-ЯёЁўқғҳЎҚҒҲ])\1{2,}', r'\1', lowered)
-        letters_pattern = r'[a-zA-Zа-яА-ЯёЁўқғҳЎҚҒҲ0-9]'
 
-        for w in words:
-            w_clean = w.strip().lower()
-            if not w_clean or len(w_clean) < 2:
-                continue
-
-            # Qisqa so'zlar (< 5 harf, masalan "am", "sik") yoki bir nechta so'zli iboralar uchun:
-            # So'zning oldidan ham, ketidan ham harf kelmasligi SHART (salam, tamom, yordam xato o'chmasligi uchun)
-            if len(w_clean) < 5 or ' ' in w_clean:
-                pattern = rf'(?<!{letters_pattern}){re.escape(w_clean)}(?!{letters_pattern})'
-            else:
-                # Uzun so'zlar (>= 5 harf, masalan "1xbet", "kazino", "jalab", "qotoq"):
-                # Oldidan harf kelmasligi shart, orqasidan esa qo'shimcha (1xbetda, jalablar) kelishi mumkin
-                pattern = rf'(?<!{letters_pattern}){re.escape(w_clean)}'
-
-            regex = re.compile(pattern, re.IGNORECASE)
-            if regex.search(lowered) or regex.search(compressed):
-                return w_clean
+        for target in (lowered, compressed):
+            if self._bad_words_bounded_regex:
+                m = self._bad_words_bounded_regex.search(target)
+                if m:
+                    return m.group(0)
+            if self._bad_words_unbounded_regex:
+                m = self._bad_words_unbounded_regex.search(target)
+                if m:
+                    return m.group(0)
 
         return None
 
@@ -609,6 +702,8 @@ class Database:
     async def record_newcomer(self, user_id: int, chat_id: int):
         """Yangi a'zo qo'shilgan vaqtini yozadi."""
         now = datetime.now()
+        self._newcomers_cache[(user_id, chat_id)] = now
+
         if self.is_postgres and self.pg_pool:
             async with self.pg_pool.acquire() as conn:
                 await conn.execute("""
@@ -626,6 +721,14 @@ class Database:
 
     async def is_in_probation(self, user_id: int, chat_id: int, probation_minutes: int = 60) -> bool:
         """Foydalanuvchi hali sinov muddatida (masalan, dastlabki 60 daqiqada) ekanligini tekshiradi."""
+        pair = (user_id, chat_id)
+        if pair in self._newcomers_cache:
+            joined_at = self._newcomers_cache[pair]
+            if not joined_at:
+                return False
+            elapsed = (datetime.now() - joined_at).total_seconds() / 60.0
+            return elapsed < probation_minutes
+
         joined_at = None
         if self.is_postgres and self.pg_pool:
             async with self.pg_pool.acquire() as conn:
@@ -649,6 +752,7 @@ class Database:
                     else:
                         joined_at = row[0]
 
+        self._newcomers_cache[pair] = joined_at
         if not joined_at:
             return False
 
@@ -858,8 +962,16 @@ class Database:
 
     # ==================== FOYDALANUVCHILARNI RO'YXATGA OLISH (KNOWN USERS) ====================
     async def save_known_user(self, user_id: int, username: Optional[str], full_name: str):
-        """Foydalanuvchi ma'lumotlarini saqlash yoki yangilash."""
+        """Foydalanuvchi ma'lumotlarini saqlash yoki yangilash (Throttled: 10 daqiqada 1 marta)."""
         u_clean = username.lower().lstrip("@") if username else None
+        now_ts = time.time()
+
+        if user_id in self._known_users_cache:
+            last_ts, old_u, old_name = self._known_users_cache[user_id]
+            if (now_ts - last_ts < 600) and (old_u == u_clean) and (old_name == full_name):
+                return
+
+        self._known_users_cache[user_id] = (now_ts, u_clean, full_name)
         now = datetime.now()
         try:
             if self.is_postgres and self.pg_pool:
@@ -936,7 +1048,12 @@ class Database:
 
     # ==================== GURUH A'ZOLARINI KUZATISH VA TOZALASH ====================
     async def track_chat_member(self, chat_id: int, user_id: int):
-        """Guruh a'zosini ro'yxatga kiritish yoki yangilash."""
+        """Guruh a'zosini ro'yxatga kiritish yoki yangilash (Throttled)."""
+        pair = (chat_id, user_id)
+        if pair in self._tracked_members_cache:
+            return
+        self._tracked_members_cache.add(pair)
+
         now = datetime.now()
         try:
             if self.is_postgres and self.pg_pool:
@@ -992,6 +1109,7 @@ class Database:
 
     async def remove_chat_member(self, chat_id: int, user_id: int):
         """Guruh a'zosini ro'yxatdan o'chirish."""
+        self._tracked_members_cache.discard((chat_id, user_id))
         try:
             if self.is_postgres and self.pg_pool:
                 async with self.pg_pool.acquire() as conn:

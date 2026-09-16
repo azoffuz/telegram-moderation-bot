@@ -1,6 +1,7 @@
 import re
 import time
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, List
 
@@ -163,10 +164,13 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             pass
         return
 
+    # Guruh sozlamalarini xotiradan (RAM - 0ms) olamiz
+    settings = await db.get_all_chat_settings(chat_id)
+
     # -------------------------------------------------------------
     # 1. ANTI-FLOOD / SPAM NAZORATI
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_flood", default=True):
+    if settings.get("anti_flood", True):
         now = time.time()
         user_id = user.id
         if user_id not in user_message_times:
@@ -181,7 +185,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             except Exception:
                 pass
 
-            flood_mute_minutes = await db.get_chat_setting_int(chat_id, "flood_mute_minutes", default=10)
+            flood_mute_minutes = int(settings.get("flood_mute_minutes", 10))
             until_date = datetime.now() + timedelta(minutes=flood_mute_minutes)
             try:
                 await bot.restrict_chat_member(
@@ -190,21 +194,21 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                     permissions=ChatPermissions(can_send_messages=False),
                     until_date=until_date
                 )
-                await db.increment_stat("mutes_count")
+                asyncio.create_task(db.increment_stat("mutes_count"))
                 warn_msg = await message.answer(
                     f"🔇 <a href=\"tg://user?id={user.id}\">{user.full_name}</a> spam/flood sababli "
                     f"<b>{flood_mute_minutes} daqiqaga</b> mute qilindi!",
                     parse_mode="HTML"
                 )
                 auto_delete(warn_msg, delay=10)
-                await log_moderation(
+                asyncio.create_task(log_moderation(
                     bot=bot,
                     admin=None,
                     target_user=user,
                     action="Mute (Anti-Flood)",
                     reason=f"{FLOOD_TIME_WINDOW}s ichida {FLOOD_RATE_LIMIT}+ xabar",
                     details=f"{flood_mute_minutes} daqiqa"
-                )
+                ))
             except Exception as e:
                 logger.error(f"Anti-flood mute xatosi: {e}")
             return
@@ -212,15 +216,15 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # -------------------------------------------------------------
     # 2. YANGI A'ZOLAR MEDIA SINOV MUDDATI
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "newcomer_media_lock", default=True):
+    if settings.get("newcomer_media_lock", True):
         if has_media(message):
-            prob_mins = await db.get_chat_setting_int(chat_id, "probation_minutes", default=60)
+            prob_mins = int(settings.get("probation_minutes", 60))
             if await db.is_in_probation(user.id, chat_id, probation_minutes=prob_mins):
                 try:
                     await message.delete()
                 except Exception:
                     pass
-                await db.increment_stat("media_blocked")
+                asyncio.create_task(db.increment_stat("media_blocked"))
                 warn_msg = await message.answer(
                     f"👶 <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, "
                     f"yangi a'zolarga dastlabki <b>{prob_mins} daqiqa</b> davomida rasm, video, stiker va ovozli xabar "
@@ -228,7 +232,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                     parse_mode="HTML"
                 )
                 auto_delete(warn_msg, delay=10)
-                await send_log(
+                asyncio.create_task(send_log(
                     bot,
                     f"👶 <b>YANGI A'ZODAN MEDIA BLOKLANDI</b>\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -236,58 +240,58 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                     f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                     f"💬 <b>Guruh:</b> {message.chat.title}\n"
                     f"ℹ️ <b>Holat:</b> Sinov davrida media yuborishga urindi"
-                )
+                ))
                 return
 
     # -------------------------------------------------------------
     # 3. 100% ANTI-FORWARD
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_forward", default=True):
+    if settings.get("anti_forward", True):
         forwarded, source_info = is_forwarded(message)
         if forwarded:
             try:
                 await message.delete()
             except Exception:
                 pass
-            await db.increment_stat("forwards_deleted")
+            asyncio.create_task(db.increment_stat("forwards_deleted"))
             warn_msg = await message.answer(
                 f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda boshqa joydan xabar uzatish (forward) taqiqlangan!",
                 parse_mode="HTML"
             )
             auto_delete(warn_msg, delay=10)
-            await log_anti_forward(bot=bot, user=user, chat=message.chat, source_info=source_info)
+            asyncio.create_task(log_anti_forward(bot=bot, user=user, chat=message.chat, source_info=source_info))
             return
 
     # -------------------------------------------------------------
     # 4. 100% ANTI-LINK
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_link", default=True):
+    if settings.get("anti_link", True):
         detected_link = detect_link(message)
         if detected_link:
             try:
                 await message.delete()
             except Exception:
                 pass
-            await db.increment_stat("links_deleted")
+            asyncio.create_task(db.increment_stat("links_deleted"))
             warn_msg = await message.answer(
                 f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda havola (link) yoki reklama yuborish taqiqlangan!",
                 parse_mode="HTML"
             )
             auto_delete(warn_msg, delay=10)
-            await log_anti_link(bot=bot, user=user, chat=message.chat, link=detected_link, message_text=text)
+            asyncio.create_task(log_anti_link(bot=bot, user=user, chat=message.chat, link=detected_link, message_text=text))
             return
 
     # -------------------------------------------------------------
     # 5. TAQIQLANGAN SO'ZLAR (BAD WORDS)
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_badwords", default=True):
+    if settings.get("anti_badwords", True):
         detected_word = await db.check_bad_words_in_text(text)
         if detected_word:
             try:
                 await message.delete()
             except Exception:
                 pass
-            await db.increment_stat("badwords_deleted")
+            asyncio.create_task(db.increment_stat("badwords_deleted"))
             warn_msg = await message.answer(
                 f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda taqiqlangan so'z yoki reklamalarni ishlatish mumkin emas!",
                 parse_mode="HTML"
@@ -296,7 +300,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
 
             preview = (text[:120] + "...") if len(text) > 120 else text
             clean_preview = preview.replace("<", "&lt;").replace(">", "&gt;")
-            await send_log(
+            asyncio.create_task(send_log(
                 bot,
                 f"🚫 <b>TAQIQLANGAN SO'Z ANIQLANDI</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -305,19 +309,19 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
                 f"🔍 <b>Ushlangan so'z:</b> <code>{detected_word}</code>\n"
                 f"📝 <b>Matn:</b> <i>{clean_preview}</i>"
-            )
+            ))
             return
 
     # -------------------------------------------------------------
     # 6. ARAB VA FORS SPAM YOZUVLARI
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_arabic", default=True):
+    if settings.get("anti_arabic", True):
         if text and ARABIC_PERSIAN_REGEX.search(text):
             try:
                 await message.delete()
             except Exception:
                 pass
-            await db.increment_stat("arabic_deleted")
+            asyncio.create_task(db.increment_stat("arabic_deleted"))
             warn_msg = await message.answer(
                 f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda arab yoki fors alifbosida xabar yozish taqiqlangan!",
                 parse_mode="HTML"
@@ -326,7 +330,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
 
             preview = (text[:120] + "...") if len(text) > 120 else text
             clean_preview = preview.replace("<", "&lt;").replace(">", "&gt;")
-            await send_log(
+            asyncio.create_task(send_log(
                 bot,
                 f"🛑 <b>ARAB/FORS SPAM USHLANDI</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -334,25 +338,25 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
                 f"📝 <b>Matn:</b> <i>{clean_preview}</i>"
-            )
+            ))
             return
 
     # -------------------------------------------------------------
     # 7. TELEGRAM PREMIUM (TASHQI/MAXSUS) EMOJILAR
     # -------------------------------------------------------------
-    if await db.get_chat_setting_bool(chat_id, "anti_custom_emoji", default=True):
+    if settings.get("anti_custom_emoji", True):
         if has_custom_emoji(message):
             try:
                 await message.delete()
             except Exception:
                 pass
-            await db.increment_stat("custom_emoji_deleted")
+            asyncio.create_task(db.increment_stat("custom_emoji_deleted"))
             warn_msg = await message.answer(
                 f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda Premium (tashqi/maxsus) emojilarni yuborish taqiqlangan!",
                 parse_mode="HTML"
             )
             auto_delete(warn_msg, delay=10)
-            await send_log(
+            asyncio.create_task(send_log(
                 bot,
                 f"⭐️ <b>PREMIUM EMOJI O'CHIRILDI</b>\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -360,5 +364,5 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
                 f"ℹ️ <b>Sabab:</b> Xabarda Telegram Premium (custom emoji) ishlatilgan"
-            )
+            ))
             return
