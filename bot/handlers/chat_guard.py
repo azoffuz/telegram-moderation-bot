@@ -13,7 +13,7 @@ from bot.config import config
 from bot.database import db
 from bot.filters.chat_type import IsGroupFilter
 from bot.filters.admin import IsAdminFilter
-from bot.services.logger import send_log, log_anti_link, log_anti_forward, log_moderation
+from bot.services.logger import send_log, log_anti_link, log_anti_forward, log_moderation, log_anti_location
 from bot.services.cleaner import auto_delete
 
 logger = logging.getLogger(__name__)
@@ -116,8 +116,20 @@ def has_custom_emoji(message: Message) -> bool:
         return True
     return False
 
+def has_location(message: Message) -> Tuple[bool, str]:
+    """Telegram lokatsiyasi yoki joy (venue) yuborilganini aniqlaydi."""
+    if message.location is not None:
+        if getattr(message.location, "live_period", None):
+            return True, "Jonli lokatsiya (Live Location)"
+        return True, "Oddiy lokatsiya (Location)"
+    if message.venue is not None:
+        venue_title = getattr(message.venue, "title", "Joy/Manzil")
+        return True, f"Telegram joy/manzil (Venue: {venue_title})"
+    return False, ""
+
 # ==================== ASOSIY YAGONA NAZORAT HANDLERI ====================
 @router.message(IsGroupFilter())
+@router.edited_message(IsGroupFilter())
 async def unified_chat_guard_handler(message: Message, bot: Bot):
     """
     Guruhdagi har bir xabarni ketma-ketlikda barcha himoya qatlamlaridan o'tkazuvchi
@@ -365,4 +377,23 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 f"💬 <b>Guruh:</b> {message.chat.title}\n"
                 f"ℹ️ <b>Sabab:</b> Xabarda Telegram Premium (custom emoji) ishlatilgan"
             ))
+            return
+
+    # -------------------------------------------------------------
+    # 8. TELEGRAM LOKATSIYA (JOYLASHUV) NAZORATI
+    # -------------------------------------------------------------
+    if settings.get("anti_location", False):
+        is_loc, loc_type = has_location(message)
+        if is_loc:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            asyncio.create_task(db.increment_stat("locations_deleted"))
+            warn_msg = await message.answer(
+                f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda lokatsiya (joylashuv) yuborish taqiqlangan!",
+                parse_mode="HTML"
+            )
+            auto_delete(warn_msg, delay=10)
+            asyncio.create_task(log_anti_location(bot=bot, user=user, chat=message.chat, loc_type=loc_type))
             return

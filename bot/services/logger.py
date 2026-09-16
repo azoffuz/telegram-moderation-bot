@@ -73,6 +73,20 @@ async def log_anti_forward(bot: Bot, user: User, chat: Chat, source_info: str):
     )
     await send_log(bot, text)
 
+async def log_anti_location(bot: Bot, user: User, chat: Chat, loc_type: str = "Oddiy lokatsiya"):
+    """Lokatsiya o'chirilishi haqida log."""
+    text = (
+        f"📍 <b>ANTI-LOCATION (Lokatsiya o'chirildi)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Foydalanuvchi:</b> <a href=\"tg://user?id={user.id}\">{user.full_name}</a>\n"
+        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+        f"🏷 <b>Username:</b> @{user.username if user.username else 'yo\'q'}\n"
+        f"💬 <b>Guruh:</b> {chat.title}\n"
+        f"🗺 <b>Turi:</b> {loc_type}\n"
+        f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    await send_log(bot, text)
+
 async def log_moderation(
     bot: Bot,
     admin: Optional[User],

@@ -110,6 +110,7 @@ class Database:
                         anti_arabic BOOLEAN DEFAULT TRUE,
                         newcomer_media_lock BOOLEAN DEFAULT TRUE,
                         anti_custom_emoji BOOLEAN DEFAULT TRUE,
+                        anti_location BOOLEAN DEFAULT FALSE,
                         probation_minutes INT DEFAULT 60,
                         gmt_offset INT DEFAULT 5,
                         nightmode_auto BOOLEAN DEFAULT FALSE,
@@ -189,6 +190,7 @@ class Database:
                     anti_arabic BOOLEAN DEFAULT 1,
                     newcomer_media_lock BOOLEAN DEFAULT 1,
                     anti_custom_emoji BOOLEAN DEFAULT 1,
+                    anti_location BOOLEAN DEFAULT 0,
                     probation_minutes INTEGER DEFAULT 60,
                     gmt_offset INTEGER DEFAULT 5,
                     nightmode_auto BOOLEAN DEFAULT 0,
@@ -241,6 +243,7 @@ class Database:
         # Mavjud bazalar uchun xavfsiz ustun qo'shish (Migration)
         migrations = [
             ("anti_custom_emoji", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("anti_location", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
             ("captcha_timeout", "INT DEFAULT 90", "INTEGER DEFAULT 90"),
             ("flood_mute_minutes", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
             ("auto_delete_seconds", "INT DEFAULT 20", "INTEGER DEFAULT 20"),
@@ -384,6 +387,7 @@ class Database:
         "anti_arabic": True,
         "newcomer_media_lock": True,
         "anti_custom_emoji": True,
+        "anti_location": False,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:

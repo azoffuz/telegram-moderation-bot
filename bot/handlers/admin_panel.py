@@ -146,6 +146,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"📍 Lokatsiya (Joylashuv): {status_icon(settings.get('anti_location', False))}",
+                    callback_data="toggle:anti_location"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🌙 Tungi Rejim: {night_icon(settings.get('night_mode', False))}",
                     callback_data="toggle:night_mode"
                 )
