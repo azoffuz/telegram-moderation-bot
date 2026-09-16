@@ -804,6 +804,7 @@ COMMANDS_GUIDE_TEXT = (
     "• <code>/ban @username [sabab]</code> yoki reply — Guruhdan butunlay ban qilish.\n"
     "• <code>/unban @username</code> yoki <code>/unban &lt;ID&gt;</code> — Bandan chiqarish.\n"
     "• <code>/kick @username [sabab]</code> yoki reply — Guruhdan chiqarish (qayta kira oladi).\n"
+    "• <code>/cleandeleted</code> (yoki <code>/kickdeleted</code>) — O'chirilgan akkauntlarni (Deleted Accounts) chiqarib yuborish.\n"
     "• <code>/clean &lt;soni&gt;</code> — Guruhdagi oxirgi X ta xabarni tozalash (masalan: <code>/clean 20</code>).\n\n"
     "⚙️ <b>ADMIN PANEL VA SOZLAMALAR:</b>\n"
     "• <code>/admin</code> yoki <code>/panel</code> — Interaktiv boshqaruv paneli (shaxsiy chatda).\n"

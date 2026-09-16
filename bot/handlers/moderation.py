@@ -1,4 +1,5 @@
 import re
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -535,3 +536,112 @@ async def cmd_clean(message: Message, bot: Bot):
         parse_mode="HTML"
     )
     auto_delete(confirm_msg, delay=5)
+
+# ==================== /cleandeleted (O'CHIRILGAN AKKAUNTLARNI TOZALASH) ====================
+@router.message(Command("cleandeleted", "kickdeleted", "delacc"), IsGroupFilter())
+async def cmd_clean_deleted(message: Message, bot: Bot):
+    """
+    Guruhdagi o'chirilgan (Deleted Account) a'zolarni aniqlab, guruhdan chiqarib yuboradi.
+    """
+    if not await IsAdminFilter()(message, bot):
+        auto_delete(message, 5)
+        return
+
+    chat_id = message.chat.id
+
+    # Botning guruhda a'zolarni cheklash/chiqarish huquqini tekshiramiz
+    try:
+        bot_member = await bot.get_chat_member(chat_id, bot.id)
+        if not getattr(bot_member, "can_restrict_members", False) and bot_member.status != "creator":
+            msg = await message.reply("❌ <b>Xatolik:</b> Botda a'zolarni chiqarish (Ban/Kick) huquqi yo'q!", parse_mode="HTML")
+            auto_delete(message, 5)
+            auto_delete(msg, 10)
+            return
+    except Exception as e:
+        logger.error(f"Bot huquqini tekshirishda xatolik: {e}")
+
+    status_msg = await message.reply(
+        "🔍 <b>O'chirilgan akkauntlar (Deleted Accounts) tekshirilmoqda...</b>\n"
+        "<i>Iltimos kuting, bot ma'lumotlar bazasi va guruh a'zolarini tahlil qilmoqda...</i>",
+        parse_mode="HTML"
+    )
+
+    candidate_ids = set()
+
+    # 1. Guruh adminlarini tekshiramiz (adminlar ro'yxatida qolib ketgan deleted acc larni topish)
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        for admin in admins:
+            if admin.status != "creator" and admin.user.id != bot.id:
+                candidate_ids.add(admin.user.id)
+    except Exception as e:
+        logger.debug(f"Adminlarni olishda xatolik: {e}")
+
+    # 2. Bazadagi ushbu guruhga oid barcha a'zolarni qo'shamiz
+    group_ids = await db.get_chat_member_ids(chat_id)
+    candidate_ids.update(group_ids)
+
+    # 3. Tizimda mavjud barcha ma'lum foydalanuvchilar ID larini ham qo'shamiz
+    known_ids = await db.get_all_known_user_ids()
+    candidate_ids.update(known_ids)
+
+    # Botning o'zini va buyruq bergan adminni ro'yxatdan chiqaramiz
+    candidate_ids.discard(bot.id)
+    candidate_ids.discard(message.from_user.id)
+
+    deleted_count = 0
+    checked_count = 0
+
+    for uid in candidate_ids:
+        try:
+            member = await bot.get_chat_member(chat_id, uid)
+            checked_count += 1
+
+            if member.status in ["member", "restricted", "administrator"] and member.status != "creator":
+                fname = (member.user.first_name or "").strip().lower()
+                is_deleted = (
+                    fname == "deleted account" or
+                    "deleted account" in fname or
+                    "удален" in fname
+                )
+                if is_deleted:
+                    try:
+                        await bot.ban_chat_member(chat_id=chat_id, user_id=uid)
+                        await bot.unban_chat_member(chat_id=chat_id, user_id=uid)
+                        await db.remove_chat_member(chat_id, uid)
+                        deleted_count += 1
+                    except Exception as kick_err:
+                        logger.debug(f"Deleted account {uid} ni chiqarishda xatolik: {kick_err}")
+            elif member.status in ["left", "kicked"]:
+                await db.remove_chat_member(chat_id, uid)
+        except Exception:
+            # Agar foydalanuvchi umuman topilmasa yoki chatda bo'lmasa
+            pass
+
+        # Telegram FloodLimit ga tushmaslik uchun tanaffus
+        if checked_count % 10 == 0:
+            await asyncio.sleep(0.05)
+
+    result_text = (
+        f"✅ <b>O'chirilgan akkauntlarni tozalash yakunlandi!</b>\n\n"
+        f"🗑 <b>Chiqarib yuborilgan 'Deleted Account'lar:</b> <code>{deleted_count}</code> ta\n"
+        f"👥 <b>Tekshirilgan a'zolar:</b> <code>{checked_count}</code> ta\n\n"
+        f"💡 <i>Eslatma: Telegram qoidalariga ko'ra bot faqat o'zi ko'rgan va faol a'zolarni tekshira oladi.\n"
+        f"Agar guruhda qadimdan qolgan o'chirilgan akkauntlar ko'p bo'lsa, ularni 100% tozalash uchun:\n"
+        f"Guruh profili ➡️ Tahrirlash (✏️) ➡️ <b>A'zolar (Members)</b> ➡️ Qidiruvga <code>Deleted</code> deb yozib bir zumda o'chirishingiz mumkin.</i>"
+    )
+
+    try:
+        await status_msg.edit_text(result_text, parse_mode="HTML")
+    except Exception:
+        await message.reply(result_text, parse_mode="HTML")
+
+    if deleted_count > 0:
+        await log_moderation(
+            bot=bot,
+            admin=message.from_user,
+            target_user=User(id=0, is_bot=False, first_name="Deleted Accounts"),
+            action="Clean Deleted",
+            reason=f"{deleted_count} ta o'chirilgan akkaunt guruhdan chiqarildi"
+        )
+

@@ -132,6 +132,14 @@ class Database:
                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS group_members (
+                        chat_id BIGINT,
+                        user_id BIGINT,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (chat_id, user_id)
+                    );
+                """)
         else:
             await self.sqlite_conn.execute("""
                 CREATE TABLE IF NOT EXISTS warnings (
@@ -196,6 +204,14 @@ class Database:
                     username TEXT,
                     full_name TEXT,
                     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            await self.sqlite_conn.execute("""
+                CREATE TABLE IF NOT EXISTS group_members (
+                    chat_id INTEGER,
+                    user_id INTEGER,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (chat_id, user_id)
                 );
             """)
             await self.sqlite_conn.commit()
@@ -767,6 +783,92 @@ class Database:
         except Exception as e:
             logger.debug(f"get_user_by_id xatosi: {e}")
         return None
+
+    # ==================== GURUH A'ZOLARINI KUZATISH VA TOZALASH ====================
+    async def track_chat_member(self, chat_id: int, user_id: int):
+        """Guruh a'zosini ro'yxatga kiritish yoki yangilash."""
+        now = datetime.now()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO group_members (chat_id, user_id, updated_at)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (chat_id, user_id) DO UPDATE
+                        SET updated_at = $3
+                    """, chat_id, user_id, now)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO group_members (chat_id, user_id, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(chat_id, user_id) DO UPDATE
+                    SET updated_at = excluded.updated_at
+                """, (chat_id, user_id, now))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.debug(f"track_chat_member xatosi: {e}")
+
+    async def get_chat_member_ids(self, chat_id: int) -> List[int]:
+        """Guruhda ma'lum bo'lgan barcha a'zolarning ID ro'yxatini qaytaradi."""
+        ids = set()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT user_id FROM group_members WHERE chat_id = $1", chat_id)
+                    for r in rows:
+                        ids.add(r["user_id"])
+                    n_rows = await conn.fetch("SELECT user_id FROM newcomers WHERE chat_id = $1", chat_id)
+                    for r in n_rows:
+                        ids.add(r["user_id"])
+                    w_rows = await conn.fetch("SELECT user_id FROM warnings WHERE chat_id = $1", chat_id)
+                    for r in w_rows:
+                        ids.add(r["user_id"])
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("SELECT user_id FROM group_members WHERE chat_id = ?", (chat_id,)) as cur:
+                    rows = await cur.fetchall()
+                    for r in rows:
+                        ids.add(r[0])
+                async with self.sqlite_conn.execute("SELECT user_id FROM newcomers WHERE chat_id = ?", (chat_id,)) as cur:
+                    rows = await cur.fetchall()
+                    for r in rows:
+                        ids.add(r[0])
+                async with self.sqlite_conn.execute("SELECT user_id FROM warnings WHERE chat_id = ?", (chat_id,)) as cur:
+                    rows = await cur.fetchall()
+                    for r in rows:
+                        ids.add(r[0])
+        except Exception as e:
+            logger.debug(f"get_chat_member_ids xatosi: {e}")
+        return list(ids)
+
+    async def remove_chat_member(self, chat_id: int, user_id: int):
+        """Guruh a'zosini ro'yxatdan o'chirish."""
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2", chat_id, user_id)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("DELETE FROM group_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.debug(f"remove_chat_member xatosi: {e}")
+
+    async def get_all_known_user_ids(self) -> List[int]:
+        """Tizimdagi barcha ma'lum foydalanuvchilar ID larini qaytaradi."""
+        ids = set()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("SELECT user_id FROM known_users")
+                    for r in rows:
+                        ids.add(r["user_id"])
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("SELECT user_id FROM known_users") as cur:
+                    rows = await cur.fetchall()
+                    for r in rows:
+                        ids.add(r[0])
+        except Exception as e:
+            logger.debug(f"get_all_known_user_ids xatosi: {e}")
+        return list(ids)
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""

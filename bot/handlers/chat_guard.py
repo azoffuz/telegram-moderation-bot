@@ -125,8 +125,21 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     if not message.from_user:
         return
 
-    # Foydalanuvchi ma'lumotlarini bazada yangilab boramiz (@username orqali jazo qo'llash uchun)
+    # O'chirilgan akkaunt (Deleted Account) nazorati
+    first_name = (message.from_user.first_name or "").strip().lower()
+    if first_name == "deleted account" or "deleted account" in first_name or "удален" in first_name:
+        try:
+            await message.delete()
+            await bot.ban_chat_member(chat_id=message.chat.id, user_id=message.from_user.id)
+            await bot.unban_chat_member(chat_id=message.chat.id, user_id=message.from_user.id)
+            await db.remove_chat_member(message.chat.id, message.from_user.id)
+        except Exception:
+            pass
+        return
+
+    # Foydalanuvchi ma'lumotlarini bazada yangilab boramiz (@username orqali jazo qo'llash va a'zolar ro'yxati uchun)
     await db.save_known_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
+    await db.track_chat_member(message.chat.id, message.from_user.id)
 
     # Adminlarga barcha himoyalardan o'tishga ruxsat beriladi
     if await IsAdminFilter()(message, bot):

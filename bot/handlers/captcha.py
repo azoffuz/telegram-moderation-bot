@@ -76,11 +76,21 @@ async def on_user_joined_chat_member(event: ChatMemberUpdated, bot: Bot):
     if user.is_bot:
         return
 
+    first_name = (user.first_name or "").strip().lower()
+    if first_name == "deleted account" or "deleted account" in first_name or "удален" in first_name:
+        try:
+            await bot.ban_chat_member(chat_id=event.chat.id, user_id=user.id)
+            await bot.unban_chat_member(chat_id=event.chat.id, user_id=user.id)
+        except Exception:
+            pass
+        return
+
     chat = event.chat
 
     # Yangi a'zo sifatida qayd etamiz va statistikani oshiramiz
     await db.record_newcomer(user.id, chat.id)
     await db.save_known_user(user.id, user.username, user.full_name)
+    await db.track_chat_member(chat.id, user.id)
     await db.increment_stat("new_members")
 
     # Admin paneldan Captcha o'chirilgan bo'lsa
@@ -183,3 +193,10 @@ async def on_captcha_verified(callback: CallbackQuery, bot: Bot):
     # 5. Log kanalga yuborish
     await log_captcha(bot, user, passed=True, reason="Tugma orqali tasdiqlandi.")
     await callback.answer("✅ Siz muvaffaqiyatli tasdiqlandingiz!", show_alert=False)
+
+@router.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER), IsGroupFilter())
+async def on_user_left_chat_member(event: ChatMemberUpdated):
+    """A'zo guruhdan chiqqanda yoki chiqarilganda bazadan olib tashlaymiz."""
+    user = event.old_chat_member.user
+    if not user.is_bot:
+        await db.remove_chat_member(event.chat.id, user.id)
