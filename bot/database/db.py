@@ -224,6 +224,7 @@ class Database:
             ("auto_delete_seconds", "INT DEFAULT 20", "INTEGER DEFAULT 20"),
             ("max_warns", "INT DEFAULT 3", "INTEGER DEFAULT 3"),
             ("last_discord_message_id", "BIGINT DEFAULT 0", "INTEGER DEFAULT 0"),
+            ("daytime_permissions", "TEXT DEFAULT NULL", "TEXT DEFAULT NULL"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -725,6 +726,52 @@ class Database:
     async def set_night_mode(self, chat_id: int, enabled: bool):
         """Tungi rejim holatini saqlaydi."""
         await self.set_chat_setting_bool(chat_id, "night_mode", enabled)
+
+    async def save_daytime_permissions(self, chat_id: int, perms: Dict[str, Any]):
+        """Kunduzgi guruh huquqlari nusxasini bazada saqlaydi."""
+        import json
+        raw = json.dumps(perms)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO chat_settings (chat_id, daytime_permissions)
+                        VALUES ($1, $2)
+                        ON CONFLICT (chat_id) DO UPDATE SET daytime_permissions = $2
+                    """, chat_id, raw)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO chat_settings (chat_id, daytime_permissions)
+                    VALUES (?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET daytime_permissions = excluded.daytime_permissions
+                """, (chat_id, raw))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.debug(f"save_daytime_permissions xatosi: {e}")
+
+    async def get_daytime_permissions(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        """Bazadan saqlangan kunduzgi huquqlarni oladi."""
+        import json
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    val = await conn.fetchval(
+                        "SELECT daytime_permissions FROM chat_settings WHERE chat_id = $1",
+                        chat_id
+                    )
+                    if val:
+                        return json.loads(val)
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(
+                    "SELECT daytime_permissions FROM chat_settings WHERE chat_id = ?",
+                    (chat_id,)
+                ) as cur:
+                    row = await cur.fetchone()
+                    if row and row[0]:
+                        return json.loads(row[0])
+        except Exception as e:
+            logger.debug(f"get_daytime_permissions xatosi: {e}")
+        return None
 
     # ==================== FOYDALANUVCHILARNI RO'YXATGA OLISH (KNOWN USERS) ====================
     async def save_known_user(self, user_id: int, username: Optional[str], full_name: str):

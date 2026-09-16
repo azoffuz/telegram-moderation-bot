@@ -250,30 +250,9 @@ async def cb_toggle_setting(callback: CallbackQuery, bot: Bot):
     # Agar tungi rejim o'zgargan bo'lsa, Telegram guruh huquqlarini ham o'zgartiramiz!
     if setting_name == "night_mode" and chat_id:
         try:
-            if new_val:
-                # Guruhni yopish
-                await bot.set_chat_permissions(
-                    chat_id=chat_id,
-                    permissions=ChatPermissions(
-                        can_send_messages=False,
-                        can_send_media_messages=False,
-                        can_send_other_messages=False,
-                        can_add_web_page_previews=False
-                    )
-                )
-                await log_night_mode(bot, callback.from_user, enabled=True)
-            else:
-                # Guruhni ochish
-                await bot.set_chat_permissions(
-                    chat_id=chat_id,
-                    permissions=ChatPermissions(
-                        can_send_messages=True,
-                        can_send_media_messages=True,
-                        can_send_other_messages=True,
-                        can_add_web_page_previews=True
-                    )
-                )
-                await log_night_mode(bot, callback.from_user, enabled=False)
+            from bot.handlers.nightmode import apply_night_mode_permissions
+            await apply_night_mode_permissions(bot, chat_id, enable=new_val)
+            await log_night_mode(bot, callback.from_user, enabled=new_val)
         except Exception as e:
             logger.error(f"Guruh huquqlarini o'zgartirishda xatolik: {e}")
 
