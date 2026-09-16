@@ -493,14 +493,32 @@ class Database:
         if not text:
             return None
         words = await self.get_all_bad_words()
+        if not words:
+            return None
+
         lowered = text.lower()
+        # 3 ta va undan ortiq takrorlangan harflarni siqish (masalan: aaaam -> am, saloooom -> salom)
+        compressed = re.sub(r'([a-zA-Zа-яА-ЯёЁўқғҳЎҚҒҲ])\1{2,}', r'\1', lowered)
+        letters_pattern = r'[a-zA-Zа-яА-ЯёЁўқғҳЎҚҒҲ0-9]'
+
         for w in words:
             w_clean = w.strip().lower()
             if not w_clean or len(w_clean) < 2:
                 continue
-            pattern = re.escape(w_clean)
-            if re.search(pattern, lowered):
+
+            # Qisqa so'zlar (< 5 harf, masalan "am", "sik") yoki bir nechta so'zli iboralar uchun:
+            # So'zning oldidan ham, ketidan ham harf kelmasligi SHART (salam, tamom, yordam xato o'chmasligi uchun)
+            if len(w_clean) < 5 or ' ' in w_clean:
+                pattern = rf'(?<!{letters_pattern}){re.escape(w_clean)}(?!{letters_pattern})'
+            else:
+                # Uzun so'zlar (>= 5 harf, masalan "1xbet", "kazino", "jalab", "qotoq"):
+                # Oldidan harf kelmasligi shart, orqasidan esa qo'shimcha (1xbetda, jalablar) kelishi mumkin
+                pattern = rf'(?<!{letters_pattern}){re.escape(w_clean)}'
+
+            regex = re.compile(pattern, re.IGNORECASE)
+            if regex.search(lowered) or regex.search(compressed):
                 return w_clean
+
         return None
 
     # ==================== YANGI A'ZOLAR SINOV MUDDATI ====================
