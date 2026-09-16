@@ -19,7 +19,10 @@ async def cmd_nightmode(message: Message, bot: Bot):
     /nightmode off -> Guruhni ochadi
     """
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     parts = message.text.split()

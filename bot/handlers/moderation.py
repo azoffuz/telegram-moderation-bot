@@ -160,7 +160,10 @@ async def parse_target_and_arguments(
 async def cmd_warn(message: Message, bot: Bot):
     """Foydalanuvchiga ogohlantirish berish (/warn @username [sabab] yoki reply)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, target_username, _, _, reason = await parse_target_and_arguments(message, bot)
@@ -236,7 +239,10 @@ async def cmd_warn(message: Message, bot: Bot):
 async def cmd_unwarn(message: Message, bot: Bot):
     """Ogohlantirishni kamaytirish."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
@@ -260,6 +266,13 @@ async def cmd_unwarn(message: Message, bot: Bot):
 @router.message(Command("warns"), IsGroupFilter())
 async def cmd_warns(message: Message, bot: Bot):
     """Foydalanuvchining ogohlantirishlar sonini ko'rish."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
     target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
     if not target_id:
         target_id = message.from_user.id
@@ -290,7 +303,10 @@ async def cmd_mute(message: Message, bot: Bot):
     • Reply qilib: /mute 10h [sabab]
     """
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, target_username, delta, duration_str, reason = await parse_target_and_arguments(message, bot)
@@ -352,7 +368,10 @@ async def cmd_mute(message: Message, bot: Bot):
 async def cmd_unmute(message: Message, bot: Bot):
     """Mutedan chiqarish (/unmute @username yoki reply)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, target_username, _, _, _ = await parse_target_and_arguments(message, bot)
@@ -398,7 +417,10 @@ async def cmd_unmute(message: Message, bot: Bot):
 async def cmd_ban(message: Message, bot: Bot):
     """Foydalanuvchini guruhdan butunlay ban qilish (/ban @username [sabab] yoki reply)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, target_username, _, _, reason = await parse_target_and_arguments(message, bot)
@@ -442,7 +464,10 @@ async def cmd_ban(message: Message, bot: Bot):
 async def cmd_unban(message: Message, bot: Bot):
     """Foydalanuvchini bandan chiqarish (/unban @username yoki /unban 12345)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
@@ -467,7 +492,10 @@ async def cmd_unban(message: Message, bot: Bot):
 async def cmd_kick(message: Message, bot: Bot):
     """Foydalanuvchini guruhdan chiqarib yuborish (/kick @username [sabab] yoki reply)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     target_id, target_name, target_username, _, _, reason = await parse_target_and_arguments(message, bot)
@@ -512,7 +540,10 @@ async def cmd_kick(message: Message, bot: Bot):
 async def cmd_clean(message: Message, bot: Bot):
     """Chatdagi oxirgi X ta xabarni tozalash (/clean 20)."""
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     parts = message.text.split()
@@ -544,7 +575,10 @@ async def cmd_clean_deleted(message: Message, bot: Bot):
     Guruhdagi o'chirilgan (Deleted Account) a'zolarni aniqlab, guruhdan chiqarib yuboradi.
     """
     if not await IsAdminFilter()(message, bot):
-        auto_delete(message, 5)
+        try:
+            await message.delete()
+        except Exception:
+            pass
         return
 
     chat_id = message.chat.id

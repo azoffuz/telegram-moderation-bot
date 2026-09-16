@@ -12,7 +12,7 @@ from aiogram.types import (
 )
 from bot.config import config
 from bot.database import db
-from bot.filters.admin import IsOwnerFilter, IsBotAdminFilter
+from bot.filters.admin import IsOwnerFilter, IsBotAdminFilter, IsAdminFilter
 from bot.services.logger import send_log, log_night_mode
 from bot.services.cleaner import auto_delete
 
@@ -136,9 +136,10 @@ async def cmd_admin_panel(message: Message, bot: Bot):
     # 1. Adminlik tekshiruvi
     if not await db.is_bot_admin(message.from_user.id):
         if message.chat.type != "private":
-            auto_delete(message, 5)
-        else:
-            await message.reply("❌ Siz bot administratori emassiz!")
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     # 2. Agar guruhda yozilgan bo'lsa: lichkaga havola beramiz (xavfsizlik va qulaylik uchun)
@@ -412,7 +413,11 @@ async def cb_panel_broadcast_help(callback: CallbackQuery):
 async def cmd_add_admin(message: Message, bot: Bot):
     """Yangi admin qo'shish (Faqat Owner uchun)."""
     if not db.is_owner(message.from_user.id):
-        await message.reply("❌ Faqat Bosh Admin (Owner) yangi admin qo'sha oladi!")
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     parts = message.text.split(maxsplit=2)
@@ -449,7 +454,11 @@ async def cmd_add_admin(message: Message, bot: Bot):
 async def cmd_del_admin(message: Message, bot: Bot):
     """Adminni o'chirish (Faqat Owner uchun)."""
     if not db.is_owner(message.from_user.id):
-        await message.reply("❌ Faqat Bosh Admin (Owner) adminlarni o'chira oladi!")
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     parts = message.text.split(maxsplit=1)
@@ -474,6 +483,11 @@ async def cmd_del_admin(message: Message, bot: Bot):
 async def cmd_admins_list(message: Message):
     """Adminlar ro'yxatini matn ko'rinishida ko'rish."""
     if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     bot_admins = await db.get_all_bot_admins()
@@ -496,7 +510,11 @@ async def cmd_admins_list(message: Message):
 async def cmd_broadcast(message: Message, bot: Bot):
     """Guruhga e'lon yuborish."""
     if not await db.is_bot_admin(message.from_user.id):
-        await message.reply("❌ Siz bot administratori emassiz!")
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     parts = message.text.split(maxsplit=1)
@@ -838,8 +856,24 @@ async def cb_panel_commands_guide(callback: CallbackQuery):
 
 @router.message(Command("commands"))
 @router.message(Command("help"))
-async def cmd_all_commands(message: Message):
+async def cmd_all_commands(message: Message, bot: Bot):
     """Barcha buyruqlarni ko'rish."""
+    if not await IsAdminFilter()(message, bot):
+        if message.chat.type != "private":
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+        user_help = (
+            "📖 <b>BUYRUQLAR RO'YXATI:</b>\n\n"
+            "• <code>/rules</code> — Guruh qoidalarini ko'rish.\n"
+            "• <code>/discord</code> — Rasmiy Discord server havolasi.\n"
+            "• <code>/report</code> — Spamlarni guruh adminlariga bildirish (reply qilib)."
+        )
+        await message.reply(user_help, parse_mode="HTML")
+        return
+
     is_group = message.chat.type in ["group", "supergroup"]
     msg = await message.reply(COMMANDS_GUIDE_TEXT, parse_mode="HTML")
     if is_group:
@@ -869,10 +903,15 @@ async def cb_panel_today_report(callback: CallbackQuery):
 @router.message(Command("addword"))
 async def cmd_add_word(message: Message, bot: Bot):
     """Taqiqlangan so'z qo'shish."""
+    is_group = message.chat.type in ["group", "supergroup"]
     if not await db.is_bot_admin(message.from_user.id):
+        if is_group:
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
-    is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
         try:
             await message.delete()
@@ -912,10 +951,15 @@ async def cmd_add_word(message: Message, bot: Bot):
 @router.message(Command("delword"))
 async def cmd_del_word(message: Message, bot: Bot):
     """Taqiqlangan so'zni o'chirish."""
+    is_group = message.chat.type in ["group", "supergroup"]
     if not await db.is_bot_admin(message.from_user.id):
+        if is_group:
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
-    is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
         try:
             await message.delete()
@@ -961,10 +1005,15 @@ async def cmd_del_word(message: Message, bot: Bot):
 @router.message(Command("words"))
 async def cmd_words(message: Message):
     """Taqiqlangan so'zlar ro'yxatini ko'rish."""
+    is_group = message.chat.type in ["group", "supergroup"]
     if not await db.is_bot_admin(message.from_user.id):
+        if is_group:
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
-    is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
         try:
             await message.delete()
@@ -989,6 +1038,11 @@ async def cmd_words(message: Message):
 async def cmd_daily_report(message: Message):
     """Bugungi jonli hisobotni ko'rish."""
     if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type in ["group", "supergroup"]:
+            try:
+                await message.delete()
+            except Exception:
+                pass
         return
 
     from bot.services.scheduler import generate_daily_report_text
