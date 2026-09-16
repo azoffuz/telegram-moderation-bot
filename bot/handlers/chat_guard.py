@@ -179,6 +179,11 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # Guruh sozlamalarini xotiradan (RAM - 0ms) olamiz
     settings = await db.get_all_chat_settings(chat_id)
 
+    # Dinamik Slowmode tekshiruvi (Orqa fonda, 0ms kechikish)
+    if settings.get("auto_slowmode", False):
+        from bot.services.slowmode import record_message_and_evaluate_slowmode
+        asyncio.create_task(record_message_and_evaluate_slowmode(bot, chat_id))
+
     # -------------------------------------------------------------
     # 1. ANTI-FLOOD / SPAM NAZORATI
     # -------------------------------------------------------------

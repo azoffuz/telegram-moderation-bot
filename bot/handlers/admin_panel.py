@@ -153,6 +153,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"⚡️ Dinamik Slowmode: {status_icon(settings.get('auto_slowmode', False))}",
+                    callback_data="toggle:auto_slowmode"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🌙 Tungi Rejim: {night_icon(settings.get('night_mode', False))}",
                     callback_data="toggle:night_mode"
                 )
@@ -274,6 +280,14 @@ async def cb_toggle_setting(callback: CallbackQuery, bot: Bot):
             await log_night_mode(bot, callback.from_user, enabled=new_val)
         except Exception as e:
             logger.error(f"Guruh huquqlarini o'zgartirishda xatolik: {e}")
+
+    # Agar dinamik slowmode o'chirilsa, guruhdagi cheklovni ham darhol 0 ga qaytaramiz
+    if setting_name == "auto_slowmode" and chat_id and not new_val:
+        try:
+            from bot.services.slowmode import apply_chat_slowmode
+            await apply_chat_slowmode(bot, chat_id, 0, reason="Paneldan auto_slowmode o'chirildi")
+        except Exception as e:
+            logger.error(f"Slowmode reset xatosi: {e}")
 
     # Klaviaturani yangilaymiz
     kb = await settings_keyboard(chat_id)
@@ -1094,6 +1108,9 @@ COMMANDS_GUIDE_TEXT = (
     "• <code>/delword &lt;so'z&gt;</code> — Taqiqlangan so'zni o'chirish.\n"
     "• <code>/words</code> — Barcha taqiqlangan so'zlarni ko'rish.\n"
     "• <code>/nightmode on/off</code> — Tungi rejimni yoqish/o'chirish.\n"
+    "• <code>/slowmode</code> — Guruh yozish tezligi va dinamik rejim holati.\n"
+    "• <code>/slowmode auto on/off</code> — Dinamik slowmodeni yoqish/o'chirish.\n"
+    "• <code>/slowmode 10/30/0</code> — Qo'lda soniya belgilash yoki o'chirish.\n"
     "• <code>/dailyreport</code> — Bugungi jonli moderatsiya hisoboti.\n"
     "• <code>/setup_threads</code> — Admin guruhida barcha log mavzularini (topics) avtomatik ochish.\n"
     "• <code>/threads</code> — Sozlangan log mavzulari holatini ko'rish.\n"

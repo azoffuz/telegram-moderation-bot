@@ -199,9 +199,11 @@ async def auto_nightmode_worker(bot: Bot):
 
 def start_schedulers(bot: Bot) -> List[asyncio.Task]:
     """Barcha fon rejalashtiruvchilarini ishga tushiradi."""
+    from bot.services.slowmode import slowmode_recovery_worker
     t1 = asyncio.create_task(daily_report_cron_worker(bot))
     t2 = asyncio.create_task(auto_nightmode_worker(bot))
-    return [t1, t2]
+    t3 = asyncio.create_task(slowmode_recovery_worker(bot))
+    return [t1, t2, t3]
 
 def start_daily_report_scheduler(bot: Bot) -> asyncio.Task:
     """Eski chaqiruvlar uchun moslik funksiyasi."""

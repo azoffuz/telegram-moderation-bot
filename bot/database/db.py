@@ -112,6 +112,7 @@ class Database:
                         newcomer_media_lock BOOLEAN DEFAULT TRUE,
                         anti_custom_emoji BOOLEAN DEFAULT TRUE,
                         anti_location BOOLEAN DEFAULT FALSE,
+                        auto_slowmode BOOLEAN DEFAULT FALSE,
                         probation_minutes INT DEFAULT 60,
                         gmt_offset INT DEFAULT 5,
                         nightmode_auto BOOLEAN DEFAULT FALSE,
@@ -192,6 +193,7 @@ class Database:
                     newcomer_media_lock BOOLEAN DEFAULT 1,
                     anti_custom_emoji BOOLEAN DEFAULT 1,
                     anti_location BOOLEAN DEFAULT 0,
+                    auto_slowmode BOOLEAN DEFAULT 0,
                     probation_minutes INTEGER DEFAULT 60,
                     gmt_offset INTEGER DEFAULT 5,
                     nightmode_auto BOOLEAN DEFAULT 0,
@@ -245,6 +247,7 @@ class Database:
         migrations = [
             ("anti_custom_emoji", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
             ("anti_location", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+            ("auto_slowmode", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
             ("captcha_timeout", "INT DEFAULT 90", "INTEGER DEFAULT 90"),
             ("flood_mute_minutes", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
             ("auto_delete_seconds", "INT DEFAULT 20", "INTEGER DEFAULT 20"),
@@ -416,6 +419,7 @@ class Database:
         "newcomer_media_lock": True,
         "anti_custom_emoji": True,
         "anti_location": False,
+        "auto_slowmode": False,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:
