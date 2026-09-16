@@ -39,7 +39,8 @@ def get_captcha_keyboard(user_id: int) -> InlineKeyboardMarkup:
 async def _captcha_timeout_worker(bot: Bot, chat_id: int, user_id: int, message_id: int):
     """Belgilangan vaqt ichida tugmani bosmasa guruhdan chiqarish."""
     try:
-        await asyncio.sleep(config.CAPTCHA_TIMEOUT)
+        timeout = await db.get_chat_setting_int(chat_id, "captcha_timeout", default=config.CAPTCHA_TIMEOUT)
+        await asyncio.sleep(timeout)
         
         # Agar hali ham tasdiqlamagan bo'lsa
         if user_id in pending_captchas:
@@ -61,7 +62,7 @@ async def _captcha_timeout_worker(bot: Bot, chat_id: int, user_id: int, message_
                     bot=bot,
                     user=user_info.user,
                     passed=False,
-                    reason=f"{config.CAPTCHA_TIMEOUT} soniya ichida tasdiqlash tugmasini bosmadi."
+                    reason=f"{timeout} soniya ichida tasdiqlash tugmasini bosmadi."
                 )
             except Exception as e:
                 logger.error(f"Foydalanuvchini kick qilishda xatolik ({user_id}): {e}")
@@ -79,32 +80,29 @@ async def on_user_joined_chat_member(event: ChatMemberUpdated, bot: Bot):
 
     # Yangi a'zo sifatida qayd etamiz va statistikani oshiramiz
     await db.record_newcomer(user.id, chat.id)
-    await db.increment_stat("joins_count")
+    await db.save_known_user(user.id, user.username, user.full_name)
+    await db.increment_stat("new_members")
 
-    # Admin paneldan Captcha o'chirilgan bo'lsa tekshirish
+    # Admin paneldan Captcha o'chirilgan bo'lsa
     if not await db.get_chat_setting_bool(chat.id, "captcha_enabled", default=True):
         return
 
-    # 1. Guruhda yozish huquqini darhol cheklaymiz
+    # 1. Guruh a'zosining yozish huquqini vaqtincha cheklaymiz
     try:
         await bot.restrict_chat_member(
             chat_id=chat.id,
             user_id=user.id,
-            permissions=ChatPermissions(
-                can_send_messages=False,
-                can_send_media_messages=False,
-                can_send_other_messages=False,
-                can_add_web_page_previews=False
-            )
+            permissions=ChatPermissions(can_send_messages=False)
         )
     except Exception as e:
         logger.warning(f"Foydalanuvchini cheklashda xatolik ({user.id}): {e}")
 
     # 2. Captcha xabarini yuboramiz
+    timeout = await db.get_chat_setting_int(chat.id, "captcha_timeout", default=config.CAPTCHA_TIMEOUT)
     text = (
         f"👋 Assalomu alaykum, <a href=\"tg://user?id={user.id}\">{user.full_name}</a>!\n\n"
         f"🤖 Guruhda spamlarni oldini olish uchun pastdagi tugmani bosing.\n"
-        f"⏳ Sizga berilgan vaqt: <b>{config.CAPTCHA_TIMEOUT} soniya</b>."
+        f"⏳ Sizga berilgan vaqt: <b>{timeout} soniya</b>."
     )
     
     try:

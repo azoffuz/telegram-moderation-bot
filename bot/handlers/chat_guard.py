@@ -154,7 +154,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             except Exception:
                 pass
 
-            until_date = datetime.now() + timedelta(minutes=MUTE_DURATION_MINUTES)
+            flood_mute_minutes = await db.get_chat_setting_int(chat_id, "flood_mute_minutes", default=10)
+            until_date = datetime.now() + timedelta(minutes=flood_mute_minutes)
             try:
                 await bot.restrict_chat_member(
                     chat_id=chat_id,
@@ -165,7 +166,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 await db.increment_stat("mutes_count")
                 warn_msg = await message.answer(
                     f"🔇 <a href=\"tg://user?id={user.id}\">{user.full_name}</a> spam/flood sababli "
-                    f"<b>{MUTE_DURATION_MINUTES} daqiqaga</b> mute qilindi!",
+                    f"<b>{flood_mute_minutes} daqiqaga</b> mute qilindi!",
                     parse_mode="HTML"
                 )
                 auto_delete(warn_msg, delay=10)
@@ -175,7 +176,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                     target_user=user,
                     action="Mute (Anti-Flood)",
                     reason=f"{FLOOD_TIME_WINDOW}s ichida {FLOOD_RATE_LIMIT}+ xabar",
-                    details=f"{MUTE_DURATION_MINUTES} daqiqa"
+                    details=f"{flood_mute_minutes} daqiqa"
                 )
             except Exception as e:
                 logger.error(f"Anti-flood mute xatosi: {e}")
@@ -186,7 +187,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # -------------------------------------------------------------
     if await db.get_chat_setting_bool(chat_id, "newcomer_media_lock", default=True):
         if has_media(message):
-            if await db.is_in_probation(user.id, chat_id, probation_minutes=60):
+            prob_mins = await db.get_chat_setting_int(chat_id, "probation_minutes", default=60)
+            if await db.is_in_probation(user.id, chat_id, probation_minutes=prob_mins):
                 try:
                     await message.delete()
                 except Exception:
@@ -194,7 +196,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 await db.increment_stat("media_blocked")
                 warn_msg = await message.answer(
                     f"👶 <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, "
-                    f"yangi a'zolarga dastlabki <b>60 daqiqa</b> davomida rasm, video, stiker va ovozli xabar "
+                    f"yangi a'zolarga dastlabki <b>{prob_mins} daqiqa</b> davomida rasm, video, stiker va ovozli xabar "
                     f"yuborish cheklangan. Guruhda faqat oddiy matn yoza olasiz!",
                     parse_mode="HTML"
                 )

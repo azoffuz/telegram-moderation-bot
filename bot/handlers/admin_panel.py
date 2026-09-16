@@ -29,14 +29,18 @@ def main_panel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="⚙️ Guruh Himoya Sozlamalari", callback_data="panel:settings")
+                InlineKeyboardButton(text="⚙️ Guruh Himoya Qatlamlari", callback_data="panel:settings")
             ],
             [
-                InlineKeyboardButton(text="📝 Taqiqlangan So'zlar", callback_data="panel:badwords"),
+                InlineKeyboardButton(text="⏱ Vaqt & Muddat Sozlamalari", callback_data="panel:time_settings")
+            ],
+            [
+                InlineKeyboardButton(text="📝 Taqiqlangan So'zlar", callback_data="panel:badwords:page:1"),
                 InlineKeyboardButton(text="👥 Bot Adminlari", callback_data="panel:admins")
             ],
             [
-                InlineKeyboardButton(text="📊 Jonli Hisobot & Statistika", callback_data="panel:today_report")
+                InlineKeyboardButton(text="📊 Jonli Hisobot", callback_data="panel:today_report"),
+                InlineKeyboardButton(text="📖 Buyruqlar Qo'llanmasi", callback_data="panel:commands_guide")
             ],
             [
                 InlineKeyboardButton(text="📢 Guruhga E'lon Yuborish", callback_data="panel:broadcast")
@@ -523,44 +527,95 @@ async def cmd_broadcast(message: Message, bot: Bot):
         logger.error(f"E'lon yuborishda xatolik: {e}")
         await message.reply(f"❌ Xatolik yuz berdi: {e}")
 
-# ==================== TAQIQLANGAN SO'ZLAR MENYUSI ====================
-@router.callback_query(F.data == "panel:badwords")
-async def cb_panel_badwords(callback: CallbackQuery):
-    """Taqiqlangan so'zlar ro'yxati va boshqaruvi."""
-    if not await db.is_bot_admin(callback.from_user.id):
-        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
-        return
+# ==================== TAQIQLANGAN SO'ZLAR (PAGINATSIYA BILAN) ====================
+WORDS_PER_PAGE = 6
 
+async def render_badwords_page(page: int = 1) -> Tuple[str, InlineKeyboardMarkup]:
+    """Taqiqlangan so'zlar ro'yxatini sahifalarga bo'lib (Pagination) chiqaradi."""
     words = await db.get_all_bad_words()
-    text = "📝 <b>TAQIQLANGAN SO'ZLAR RO'YXATI (Blacklist):</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+    total_words = len(words)
+    total_pages = max(1, (total_words + WORDS_PER_PAGE - 1) // WORDS_PER_PAGE)
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * WORDS_PER_PAGE
+    end_idx = start_idx + WORDS_PER_PAGE
+    page_words = words[start_idx:end_idx]
+
+    text = (
+        f"📝 <b>TAQIQLANGAN SO'ZLAR (Blacklist)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📄 <b>Sahifa:</b> <code>{page}/{total_pages}</code> | 📊 <b>Jami:</b> <code>{total_words} ta so'z</code>\n\n"
+    )
 
     if not words:
         text += "<i>(Hozircha taqiqlangan so'zlar kiritilmagan)</i>\n"
     else:
-        for idx, w in enumerate(words, 1):
-            text += f"{idx}. <code>{w}</code>\n"
+        for idx, w in enumerate(page_words, start=start_idx + 1):
+            text += f"<b>{idx}.</b> <code>{w}</code>\n"
 
     text += (
-        "\n💡 <b>Yangi so'z qo'shish uchun:</b>\n"
-        "<code>/addword &lt;so'z&gt;</code>\n"
-        "<i>Misol:</i> <code>/addword 1xbet</code>\n\n"
-        "💡 <b>So'zni o'chirish uchun:</b>\n"
-        "<code>/delword &lt;so'z&gt;</code> yoki pastdagi tugmani bosing."
+        "\n💡 <b>Yangi so'z qo'shish:</b> <code>/addword &lt;so'z&gt;</code>\n"
+        "💡 <b>O'chirish:</b> pastdagi tugmani bosing yoki <code>/delword &lt;so'z&gt;</code>"
     )
 
     buttons = []
-    # Eng so'nggi 8 ta so'zni tugma qilib chiqaramiz (bitta bosishda o'chirish uchun)
-    for w in words[:8]:
-        buttons.append([
-            InlineKeyboardButton(text=f"❌ O'chirish: {w}", callback_data=f"del_word:{w}")
-        ])
+    # 2 ustunli o'chirish tugmalari
+    row = []
+    for w in page_words:
+        row.append(InlineKeyboardButton(text=f"❌ {w}", callback_data=f"del_w:{w}:{page}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
 
-    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:main")])
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    # Sahifalash navigatsiyasi
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"panel:badwords:page:{page - 1}"))
+    else:
+        nav_row.append(InlineKeyboardButton(text="⏹", callback_data="noop"))
 
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="noop"))
+
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"panel:badwords:page:{page + 1}"))
+    else:
+        nav_row.append(InlineKeyboardButton(text="⏹", callback_data="noop"))
+
+    buttons.append(nav_row)
+
+    buttons.append([
+        InlineKeyboardButton(text="🔄 Yangilash", callback_data=f"panel:badwords:page:{page}"),
+        InlineKeyboardButton(text="⬅️ Bosh Menyu", callback_data="panel:main")
+    ])
+
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(callback: CallbackQuery):
+    """Faol bo'lmagan axborot tugmalari uchun."""
+    await callback.answer()
+
+@router.callback_query(F.data == "panel:badwords")
+@router.callback_query(F.data.startswith("panel:badwords:page:"))
+async def cb_panel_badwords(callback: CallbackQuery):
+    """Taqiqlangan so'zlar paginatsiya menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    page = 1
+    if ":" in callback.data:
+        parts = callback.data.split(":")
+        if len(parts) >= 4 and parts[3].isdigit():
+            page = int(parts[3])
+
+    text, kb = await render_badwords_page(page)
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
+@router.callback_query(F.data.startswith("del_w:"))
 @router.callback_query(F.data.startswith("del_word:"))
 async def cb_del_badword(callback: CallbackQuery, bot: Bot):
     """Taqiqlangan so'zni inline tugma orqali o'chirish."""
@@ -568,11 +623,16 @@ async def cb_del_badword(callback: CallbackQuery, bot: Bot):
         await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
         return
 
-    word_to_del = callback.data.split(":", 1)[1]
+    parts = callback.data.split(":")
+    word_to_del = parts[1]
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 1
+
     success = await db.remove_bad_word(word_to_del)
     if success:
-        await callback.answer(f"✅ '{word_to_del}' so'zi o'chirildi!", show_alert=True)
-        await cb_panel_badwords(callback)
+        await callback.answer(f"✅ '{word_to_del}' o'chirildi!", show_alert=False)
+        text, kb = await render_badwords_page(page)
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
         admin_user = callback.from_user
         await send_log(
             bot,
@@ -585,6 +645,205 @@ async def cb_del_badword(callback: CallbackQuery, bot: Bot):
         )
     else:
         await callback.answer("❌ So'z topilmadi!", show_alert=True)
+
+# ==================== VAQT VA MUDDAT SOZLAMALARI MENYUSI ====================
+TIME_OPTIONS = {
+    "captcha_timeout": {
+        "title": "🛡 Captcha kutish vaqtini tanlang:",
+        "unit": "soniya",
+        "key": "captcha_timeout",
+        "values": [30, 60, 90, 120, 180, 300]
+    },
+    "probation_minutes": {
+        "title": "👶 Yangi a'zolar media cheklovi muddatini tanlang:",
+        "unit": "daqiqa",
+        "key": "probation_minutes",
+        "values": [15, 30, 60, 120, 360, 1440]
+    },
+    "flood_mute_minutes": {
+        "title": "⚡️ Spam/Flood uchun mute muddatini tanlang:",
+        "unit": "daqiqa",
+        "key": "flood_mute_minutes",
+        "values": [5, 10, 30, 60, 1440]
+    },
+    "auto_delete_seconds": {
+        "title": "🧹 Xabarlar avtomatik o'chish vaqtini tanlang:",
+        "unit": "soniya",
+        "key": "auto_delete_seconds",
+        "values": [5, 10, 15, 20, 30, 60]
+    },
+    "max_warns": {
+        "title": "⚠️ Maksimal ogohlantirish (warn) sonini tanlang:",
+        "unit": "ta",
+        "key": "max_warns",
+        "values": [2, 3, 5, 10]
+    }
+}
+
+async def render_time_settings_menu(chat_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+    captcha_timeout = await db.get_chat_setting_int(chat_id, "captcha_timeout", default=90)
+    probation_minutes = await db.get_chat_setting_int(chat_id, "probation_minutes", default=60)
+    flood_mute_minutes = await db.get_chat_setting_int(chat_id, "flood_mute_minutes", default=10)
+    auto_delete_seconds = await db.get_chat_setting_int(chat_id, "auto_delete_seconds", default=20)
+    max_warns = await db.get_chat_setting_int(chat_id, "max_warns", default=3)
+
+    text = (
+        f"⏱ <b>GURUH VAQT VA MUDDAT SOZLAMALARI:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🛡 <b>Captcha kutish vaqti:</b> <code>{captcha_timeout} soniya</code>\n"
+        f"👶 <b>Yangi a'zolar media cheklovi:</b> <code>{probation_minutes} daqiqa</code>\n"
+        f"⚡️ <b>Spam/Flood uchun mute:</b> <code>{flood_mute_minutes} daqiqa</code>\n"
+        f"🧹 <b>Xabarlar avto-o'chishi:</b> <code>{auto_delete_seconds} soniya</code>\n"
+        f"⚠️ <b>Maksimal warnlar soni:</b> <code>{max_warns} ta</code>\n\n"
+        f"<i>O'zgartirmoqchi bo'lgan sozlamangiz tugmasini bosing:</i>"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"🛡 Captcha Vaqti: {captcha_timeout}s", callback_data="time_menu:captcha_timeout")],
+            [InlineKeyboardButton(text=f"👶 Yangilar Media Cheklovi: {probation_minutes}m", callback_data="time_menu:probation_minutes")],
+            [InlineKeyboardButton(text=f"⚡️ Flood Mute Vaqti: {flood_mute_minutes}m", callback_data="time_menu:flood_mute_minutes")],
+            [InlineKeyboardButton(text=f"🧹 Avto-o'chirish: {auto_delete_seconds}s", callback_data="time_menu:auto_delete_seconds")],
+            [InlineKeyboardButton(text=f"⚠️ Max Warn: {max_warns} ta", callback_data="time_menu:max_warns")],
+            [InlineKeyboardButton(text="⬅️ Bosh Menyu", callback_data="panel:main")]
+        ]
+    )
+    return text, kb
+
+@router.callback_query(F.data == "panel:time_settings")
+async def cb_panel_time_settings(callback: CallbackQuery):
+    """Vaqt sozlamalari asosiy menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    text, kb = await render_time_settings_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("time_menu:"))
+async def cb_time_menu(callback: CallbackQuery):
+    """Muayyan vaqt parametri uchun variantlar menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    param = callback.data.split(":")[1]
+    conf = TIME_OPTIONS.get(param)
+    if not conf:
+        await callback.answer("Noma'lum parametr!")
+        return
+
+    chat_id = get_group_target_id()
+    current_val = await db.get_chat_setting_int(chat_id, param)
+
+    buttons = []
+    row = []
+    for v in conf["values"]:
+        label = f"🔘 {v} {conf['unit']}" if v == current_val else f"{v} {conf['unit']}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"set_time:{param}:{v}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:time_settings")])
+
+    text = (
+        f"⏱ <b>{conf['title']}</b>\n\n"
+        f"Joriy qiymat: <b>{current_val} {conf['unit']}</b>\n"
+        f"<i>Yangi qiymatni tanlang:</i>"
+    )
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("set_time:"))
+async def cb_set_time(callback: CallbackQuery, bot: Bot):
+    """Vaqt sozlamasini o'zgartirish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    param = parts[1]
+    val = int(parts[2])
+    chat_id = get_group_target_id()
+
+    await db.set_chat_setting_int(chat_id, param, val)
+    conf = TIME_OPTIONS.get(param, {"unit": ""})
+    await callback.answer(f"✅ {val} {conf['unit']} qilib belgilandi!", show_alert=True)
+
+    text, kb = await render_time_settings_menu(chat_id)
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    admin_user = callback.from_user
+    await send_log(
+        bot,
+        f"⏱ <b>VAQT SOZLAMASI O'ZGARTIRILDI</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Admin:</b> <a href=\"tg://user?id={admin_user.id}\">{admin_user.full_name}</a>\n"
+        f"🆔 <b>Admin ID:</b> <code>{admin_user.id}</code>\n"
+        f"⚙️ <b>Parametr:</b> <code>{param}</code>\n"
+        f"📊 <b>Yangi qiymat:</b> <code>{val} {conf.get('unit', '')}</code>\n"
+        f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+# ==================== BARCHA BUYRUQLAR QO'LLANMASI ====================
+COMMANDS_GUIDE_TEXT = (
+    "📖 <b>BOTNING BARCHA BUYRUQLARI VA QO'LLANMASI:</b>\n"
+    "━━━━━━━━━━━━━━━━━━\n\n"
+    "👮‍♂️ <b>MODERATSIYA BUYRUQLARI (Adminlar uchun):</b>\n"
+    "• <code>/mute @username 10h [sabab]</code> — Foydalanuvchini vaqtincha yozishdan cheklash (sababi ixtiyoriy).\n"
+    "• <code>/mute 10h [sabab]</code> — Xabarga reply qilib mute qilish.\n"
+    "• <code>/unmute @username</code> yoki reply — Mutedan chiqarish.\n"
+    "• <code>/warn @username [sabab]</code> yoki reply — Ogohlantirish berish (limitga yetsa avto-mute).\n"
+    "• <code>/unwarn @username</code> yoki reply — Ogohlantirishni kamaytirish.\n"
+    "• <code>/warns</code> — Foydalanuvchi ogohlantirishlarini ko'rish.\n"
+    "• <code>/ban @username [sabab]</code> yoki reply — Guruhdan butunlay ban qilish.\n"
+    "• <code>/unban @username</code> yoki <code>/unban &lt;ID&gt;</code> — Bandan chiqarish.\n"
+    "• <code>/kick @username [sabab]</code> yoki reply — Guruhdan chiqarish (qayta kira oladi).\n"
+    "• <code>/clean &lt;soni&gt;</code> — Guruhdagi oxirgi X ta xabarni tozalash (masalan: <code>/clean 20</code>).\n\n"
+    "⚙️ <b>ADMIN PANEL VA SOZLAMALAR:</b>\n"
+    "• <code>/admin</code> yoki <code>/panel</code> — Interaktiv boshqaruv paneli (shaxsiy chatda).\n"
+    "• <code>/addword &lt;so'z&gt;</code> — Taqiqlangan so'z qo'shish (guruhda avto-o'chiriladi).\n"
+    "• <code>/delword &lt;so'z&gt;</code> — Taqiqlangan so'zni o'chirish.\n"
+    "• <code>/words</code> — Barcha taqiqlangan so'zlarni ko'rish.\n"
+    "• <code>/nightmode on/off</code> — Tungi rejimni yoqish/o'chirish.\n"
+    "• <code>/dailyreport</code> — Bugungi jonli moderatsiya hisoboti.\n"
+    "• <code>/addadmin &lt;ID&gt;</code> — Botga yangi admin qo'shish (faqat Bot Egasi).\n"
+    "• <code>/deladmin &lt;ID&gt;</code> — Adminni olib tashlash.\n"
+    "• <code>/admins</code> — Barcha bot adminlari ro'yxati.\n\n"
+    "👥 <b>ODDIY FOYDALANUVCHILAR UCHUN:</b>\n"
+    "• <code>/start</code> — Botni ishga tushirish.\n"
+    "• <code>/rules</code> — Guruh qoidalarini ko'rish.\n"
+    "• <code>/report [sabab]</code> — Qoidabuzar xabariga reply qilib adminlarga shikoyat qilish.\n"
+    "• <code>/help</code> yoki <code>/commands</code> — Barcha buyruqlar ro'yxati.\n"
+)
+
+@router.callback_query(F.data == "panel:commands_guide")
+async def cb_panel_commands_guide(callback: CallbackQuery):
+    """Barcha buyruqlar qo'llanmasi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Bosh Menyu", callback_data="panel:main")]]
+    )
+    await callback.message.edit_text(COMMANDS_GUIDE_TEXT, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.message(Command("commands"))
+@router.message(Command("help"))
+async def cmd_all_commands(message: Message):
+    """Barcha buyruqlarni ko'rish."""
+    is_group = message.chat.type in ["group", "supergroup"]
+    msg = await message.reply(COMMANDS_GUIDE_TEXT, parse_mode="HTML")
+    if is_group:
+        auto_delete(message, delay=15)
+        auto_delete(msg, delay=60)
 
 @router.callback_query(F.data == "panel:today_report")
 async def cb_panel_today_report(callback: CallbackQuery):

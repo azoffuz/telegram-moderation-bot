@@ -177,9 +177,10 @@ async def cmd_warn(message: Message, bot: Bot):
 
     new_count = await db.add_warn(target_id, message.chat.id, reason)
     target_dummy = User(id=target_id, is_bot=False, first_name=target_name or "Foydalanuvchi", username=target_username)
+    max_warns = await db.get_chat_setting_int(message.chat.id, "max_warns", default=config.MAX_WARNS)
 
-    # Agar limitga yetsa (masalan, 3 ta bo'lsa)
-    if new_count >= config.MAX_WARNS:
+    # Agar limitga yetsa
+    if new_count >= max_warns:
         await db.reset_warns(target_id, message.chat.id)
         
         # 24 soatga mute qilamiz
@@ -193,7 +194,7 @@ async def cmd_warn(message: Message, bot: Bot):
             )
             
             resp = await message.reply(
-                f"🚫 <a href=\"tg://user?id={target_id}\">{target_name}</a> <b>{config.MAX_WARNS} ta</b> "
+                f"🚫 <a href=\"tg://user?id={target_id}\">{target_name}</a> <b>{max_warns} ta</b> "
                 f"ogohlantirish oldi va <b>24 soatga mute</b> qilindi!\n"
                 f"📌 <b>So'nggi sabab:</b> {reason}",
                 parse_mode="HTML"
@@ -204,7 +205,7 @@ async def cmd_warn(message: Message, bot: Bot):
                 bot=bot,
                 admin=message.from_user,
                 target_user=target_dummy,
-                action=f"Mute ({config.MAX_WARNS} warn)",
+                action=f"Mute ({max_warns} warn)",
                 reason=reason,
                 details="24 soatga cheklandi"
             )
@@ -213,7 +214,7 @@ async def cmd_warn(message: Message, bot: Bot):
     else:
         resp = await message.reply(
             f"⚠️ <a href=\"tg://user?id={target_id}\">{target_name}</a> ogohlantirildi! "
-            f"(<b>{new_count}/{config.MAX_WARNS}</b>)\n"
+            f"(<b>{new_count}/{max_warns}</b>)\n"
             f"📌 <b>Sabab:</b> {reason}",
             parse_mode="HTML"
         )
@@ -223,7 +224,7 @@ async def cmd_warn(message: Message, bot: Bot):
             bot=bot,
             admin=message.from_user,
             target_user=target_dummy,
-            action=f"Warn ({new_count}/{config.MAX_WARNS})",
+            action=f"Warn ({new_count}/{max_warns})",
             reason=reason
         )
 
@@ -245,9 +246,10 @@ async def cmd_unwarn(message: Message, bot: Bot):
         return
 
     new_count = await db.remove_warn(target_id, message.chat.id)
+    max_warns = await db.get_chat_setting_int(message.chat.id, "max_warns", default=config.MAX_WARNS)
     resp = await message.reply(
         f"✅ <a href=\"tg://user?id={target_id}\">{target_name}</a> dan bitta ogohlantirish olib tashlandi.\n"
-        f"📊 Joriy ogohlantirishlar: <b>{new_count}/{config.MAX_WARNS}</b>",
+        f"📊 Joriy ogohlantirishlar: <b>{new_count}/{max_warns}</b>",
         parse_mode="HTML"
     )
     auto_delete(message, 15)
@@ -263,10 +265,11 @@ async def cmd_warns(message: Message, bot: Bot):
         target_name = message.from_user.full_name
 
     count = await db.get_warn_count(target_id, message.chat.id)
+    max_warns = await db.get_chat_setting_int(message.chat.id, "max_warns", default=config.MAX_WARNS)
     
     resp = await message.reply(
         f"📊 <a href=\"tg://user?id={target_id}\">{target_name}</a> hisobidagi ogohlantirishlar: "
-        f"<b>{count}/{config.MAX_WARNS}</b> ta.",
+        f"<b>{count}/{max_warns}</b> ta.",
         parse_mode="HTML"
     )
     auto_delete(message, 15)

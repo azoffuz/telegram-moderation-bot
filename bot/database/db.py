@@ -201,15 +201,23 @@ class Database:
             await self.sqlite_conn.commit()
 
         # Mavjud bazalar uchun xavfsiz ustun qo'shish (Migration)
-        try:
-            if self.is_postgres and self.pg_pool:
-                async with self.pg_pool.acquire() as conn:
-                    await conn.execute("ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS anti_custom_emoji BOOLEAN DEFAULT TRUE;")
-            elif self.sqlite_conn:
-                await self.sqlite_conn.execute("ALTER TABLE chat_settings ADD COLUMN anti_custom_emoji BOOLEAN DEFAULT 1;")
-                await self.sqlite_conn.commit()
-        except Exception:
-            pass
+        migrations = [
+            ("anti_custom_emoji", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("captcha_timeout", "INT DEFAULT 90", "INTEGER DEFAULT 90"),
+            ("flood_mute_minutes", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
+            ("auto_delete_seconds", "INT DEFAULT 20", "INTEGER DEFAULT 20"),
+            ("max_warns", "INT DEFAULT 3", "INTEGER DEFAULT 3"),
+        ]
+        for col, pg_type, sq_type in migrations:
+            try:
+                if self.is_postgres and self.pg_pool:
+                    async with self.pg_pool.acquire() as conn:
+                        await conn.execute(f"ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS {col} {pg_type};")
+                elif self.sqlite_conn:
+                    await self.sqlite_conn.execute(f"ALTER TABLE chat_settings ADD COLUMN {col} {sq_type};")
+                    await self.sqlite_conn.commit()
+            except Exception:
+                pass
 
     async def _seed_default_bad_words(self):
         """Baza bo'sh bo'lsa standart taqiqlangan so'zlarni kiritadi."""
@@ -368,6 +376,52 @@ class Database:
         for k, def_val in self.VALID_SETTINGS.items():
             res[k] = await self.get_chat_setting_bool(chat_id, k, def_val)
         return res
+
+    VALID_INT_SETTINGS = {
+        "probation_minutes": 60,
+        "captcha_timeout": 90,
+        "flood_mute_minutes": 10,
+        "auto_delete_seconds": 20,
+        "max_warns": 3,
+    }
+
+    async def get_chat_setting_int(self, chat_id: int, setting_name: str, default: Optional[int] = None) -> int:
+        """Muayyan sozlamaning butun son (int) qiymatini oladi."""
+        if default is None:
+            default = self.VALID_INT_SETTINGS.get(setting_name, 0)
+
+        query = f"SELECT {setting_name} FROM chat_settings WHERE chat_id = $1" if self.is_postgres else f"SELECT {setting_name} FROM chat_settings WHERE chat_id = ?"
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    val = await conn.fetchval(query, chat_id)
+                    return int(val) if val is not None else default
+            else:
+                async with self.sqlite_conn.execute(query, (chat_id,)) as cursor:
+                    row = await cursor.fetchone()
+                    return int(row[0]) if row and row[0] is not None else default
+        except Exception:
+            return default
+
+    async def set_chat_setting_int(self, chat_id: int, setting_name: str, value: int):
+        """Muayyan butun sonli sozlamani o'zgartiradi."""
+        if setting_name not in self.VALID_INT_SETTINGS:
+            return
+
+        if self.is_postgres and self.pg_pool:
+            async with self.pg_pool.acquire() as conn:
+                await conn.execute(f"""
+                    INSERT INTO chat_settings (chat_id, {setting_name})
+                    VALUES ($1, $2)
+                    ON CONFLICT (chat_id) DO UPDATE SET {setting_name} = $2
+                """, chat_id, value)
+        else:
+            await self.sqlite_conn.execute(f"""
+                INSERT INTO chat_settings (chat_id, {setting_name})
+                VALUES (?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET {setting_name} = excluded.{setting_name}
+            """, (chat_id, value))
+            await self.sqlite_conn.commit()
 
     # ==================== TAQIQLANGAN SO'ZLAR (BAD WORDS) ====================
     async def add_bad_word(self, word: str, added_by: int = 0) -> bool:
