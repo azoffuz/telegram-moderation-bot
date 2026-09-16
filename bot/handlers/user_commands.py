@@ -3,6 +3,7 @@ from aiogram import Router, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.config import config
+from bot.database import db
 from bot.filters.chat_type import IsGroupFilter
 from bot.services.logger import log_report
 from bot.services.cleaner import auto_delete
@@ -23,8 +24,28 @@ async def cmd_rules(message: Message):
 
 # ==================== /discord ====================
 @router.message(Command("discord"), IsGroupFilter())
-async def cmd_discord(message: Message):
-    """Discord server havolasini tugma ko'rinishida berish."""
+async def cmd_discord(message: Message, bot: Bot):
+    """
+    Discord server havolasini yuboradi.
+    Eski Discord xabari va foydalanuvchi yozgan /discord xabari avtomatik o'chiriladi,
+    lekin yangi yuborilgan Discord xabari guruhda o'chmasdan qoladi.
+    """
+    chat_id = message.chat.id
+
+    # 1. Guruhda oldin yuborilgan Discord xabari bo'lsa, uni avtomatik o'chiramiz
+    old_msg_id = await db.get_chat_setting_int(chat_id, "last_discord_message_id", default=0)
+    if old_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=old_msg_id)
+        except Exception:
+            pass
+
+    # 2. Foydalanuvchining /discord deb yozgan buyruq xabarini darhol o'chiramiz
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -36,14 +57,19 @@ async def cmd_discord(message: Message):
         ]
     )
     
-    discord_msg = await message.reply(
-        "👋 Bizning rasmiy <b>Discord serverimizga</b> marhamat!\n"
-        "Quyidagi tugma orqali serverimizga qo'shilishingiz mumkin:",
+    # 3. Yangi Discord xabarini yuboramiz (lekin uni O'CHIRMAYMIZ)
+    discord_msg = await bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "👋 Bizning rasmiy <b>Discord serverimizga</b> marhamat!\n"
+            "Quyidagi tugma orqali serverimizga qo'shilishingiz mumkin:"
+        ),
         reply_markup=keyboard,
         parse_mode="HTML"
     )
-    auto_delete(message, delay=20)
-    auto_delete(discord_msg, delay=35)
+
+    # Yangi xabar ID sini bazada saqlaymiz (keyingi safar /discord chaqirilganda buni o'chirish uchun)
+    await db.set_chat_setting_int(chat_id, "last_discord_message_id", discord_msg.message_id)
 
 # ==================== /report ====================
 @router.message(Command("report"), IsGroupFilter())

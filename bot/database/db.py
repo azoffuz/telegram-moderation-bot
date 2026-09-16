@@ -223,6 +223,7 @@ class Database:
             ("flood_mute_minutes", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
             ("auto_delete_seconds", "INT DEFAULT 20", "INTEGER DEFAULT 20"),
             ("max_warns", "INT DEFAULT 3", "INTEGER DEFAULT 3"),
+            ("last_discord_message_id", "BIGINT DEFAULT 0", "INTEGER DEFAULT 0"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -399,6 +400,7 @@ class Database:
         "flood_mute_minutes": 10,
         "auto_delete_seconds": 20,
         "max_warns": 3,
+        "last_discord_message_id": 0,
     }
 
     async def get_chat_setting_int(self, chat_id: int, setting_name: str, default: Optional[int] = None) -> int:
