@@ -12,7 +12,7 @@ from aiogram.enums import MessageEntityType
 from bot.config import config
 from bot.database import db
 from bot.filters.chat_type import IsGroupFilter
-from bot.filters.admin import IsAdminFilter
+from bot.filters.admin import IsAdminFilter, get_linked_chat_id
 from bot.services.logger import send_log, log_anti_link, log_anti_forward, log_moderation, log_anti_location
 from bot.services.cleaner import auto_delete
 
@@ -65,6 +65,16 @@ def detect_link(message: Message) -> Optional[str]:
 
 def is_forwarded(message: Message) -> Tuple[bool, str]:
     """Xabar har qanday manbadan forward qilinganini aniqlaydi."""
+    # Telegram rasmiy avtomatik uzatmasi (kanaldan guruhga) forward sanalmaydi
+    if getattr(message, "is_automatic_forward", False):
+        return False, ""
+    if message.from_user and message.from_user.id == 777000:
+        return False, ""
+    if message.sender_chat:
+        sender_username = (message.sender_chat.username or "").lower()
+        if sender_username in ["reker_uz", "rekeruz"]:
+            return False, ""
+
     origin = getattr(message, "forward_origin", None)
     if origin is not None:
         origin_type = getattr(origin, "type", "noma'lum")
@@ -135,6 +145,30 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     Guruhdagi har bir xabarni ketma-ketlikda barcha himoya qatlamlaridan o'tkazuvchi
     yagona va tezkor moderatsiya quvuri (Pipeline).
     """
+    # 0. Telegram tomonidan kanaldan avtomatik yuborilgan xabarlar (Linked Channel / Discussion)
+    # va Telegram Service xabarlarini darhol o'tkazib yuborish (0ms)
+    if getattr(message, "is_automatic_forward", False):
+        return
+
+    if message.from_user and message.from_user.id == 777000:
+        return
+
+    if message.sender_chat:
+        # Anonim admin (guruh nomidan yozish)
+        if message.chat and message.sender_chat.id == message.chat.id:
+            return
+
+        # Foydalanuvchining rasmiy kanali (@Reker_UZ)
+        sender_username = (message.sender_chat.username or "").lower()
+        if sender_username in ["reker_uz", "rekeruz"]:
+            return
+
+        # Guruhga ulangan rasmiy kanal (linked_chat_id)
+        if message.chat:
+            linked_id = await get_linked_chat_id(bot, message.chat.id)
+            if linked_id and message.sender_chat.id == linked_id:
+                return
+
     if not message.from_user:
         return
 
