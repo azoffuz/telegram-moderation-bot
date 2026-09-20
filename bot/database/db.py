@@ -1579,6 +1579,70 @@ class Database:
             logger.error(f"get_user_activity_stats xatosi: {e}")
         return res
 
+    async def clear_activity_stats(
+        self,
+        chat_id: int,
+        user_id: Optional[int] = None,
+        date_str: Optional[str] = None,
+        month_str: Optional[str] = None
+    ) -> int:
+        """
+        Faollik statistikasini tozalaydi (DB va RAM kesh).
+        Qaytaradi: o'chirilgan yozuvlar soni.
+        """
+        # 1. RAM keshni tozalash
+        keys_to_del = []
+        for (c_id, u_id, d_str) in list(self._daily_activity_cache.keys()):
+            if c_id == chat_id:
+                if user_id is not None and u_id != user_id:
+                    continue
+                if date_str is not None and d_str != date_str:
+                    continue
+                if month_str is not None and not d_str.startswith(month_str):
+                    continue
+                keys_to_del.append((c_id, u_id, d_str))
+
+        for k in keys_to_del:
+            self._daily_activity_cache.pop(k, None)
+
+        # 2. SQL so'rovini tuzish
+        conditions = ["chat_id = $1" if self.is_postgres else "chat_id = ?"]
+        params = [chat_id]
+        idx = 2
+
+        if user_id is not None:
+            conditions.append(f"user_id = ${idx}" if self.is_postgres else "user_id = ?")
+            params.append(user_id)
+            idx += 1
+
+        if date_str is not None:
+            conditions.append(f"activity_date = ${idx}" if self.is_postgres else "activity_date = ?")
+            params.append(date_str)
+            idx += 1
+        elif month_str is not None:
+            conditions.append(f"activity_date LIKE ${idx}" if self.is_postgres else "activity_date LIKE ?")
+            params.append(f"{month_str}%")
+            idx += 1
+
+        where_clause = " AND ".join(conditions)
+        sql = f"DELETE FROM user_daily_activity WHERE {where_clause}"
+
+        deleted_count = 0
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    status = await conn.execute(sql, *params)
+                    if status and status.startswith("DELETE "):
+                        deleted_count = int(status.split()[1])
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(sql, params) as cursor:
+                    deleted_count = cursor.rowcount
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"clear_activity_stats xatosi: {e}")
+
+        return deleted_count
+
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""
         if self.pg_pool:

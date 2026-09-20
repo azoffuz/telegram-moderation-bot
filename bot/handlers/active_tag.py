@@ -19,6 +19,7 @@ from bot.services.active_tag import (
     get_tier_info,
     get_next_tier_info,
     reward_monthly_top_chatters,
+    clear_active_tag_caches,
     ACTIVITY_TIERS
 )
 
@@ -393,3 +394,147 @@ async def cmd_reward_month(message: Message, bot: Bot):
         f"Guruh: {message.chat.title}",
         category="members"
     )
+
+# ==================== STATISTIKANI TOZALASH (RESET / CLEAR) ====================
+@router.message(Command("resetactive", "clearactive", "reset_active", "clear_active"), IsGroupFilter())
+async def cmd_reset_active(message: Message, bot: Bot):
+    """Faollik statistikasini tozalash (Faqat adminlar uchun)."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    chat_id = message.chat.id
+    gmt_offset = await db.get_gmt_offset(chat_id)
+    today_str = get_chat_today_date_str(gmt_offset)
+    month_str = get_chat_current_month_str(gmt_offset)
+
+    # 1. Muayyan foydalanuvchini tozalash (reply yoki @username / ID orqali)
+    target_info = await extract_target_user(message, bot)
+    if target_info:
+        target_id, target_name, target_username = target_info
+        deleted = await db.clear_activity_stats(chat_id, user_id=target_id)
+        clear_active_tag_caches(chat_id)
+        u_link = f"<a href=\"tg://user?id={target_id}\">{html.escape(target_name)}</a>"
+        resp = await message.reply(
+            f"🗑 {u_link} ning barcha faollik statistikasi tozalandi! ({deleted} ta yozuv o'chirildi)",
+            parse_mode="HTML"
+        )
+        auto_delete(message, delay=10)
+        auto_delete(resp, delay=20)
+        return
+
+    # 2. Argumentlar bo'yicha tozalash: today, month, all
+    parts = message.text.split()
+    if len(parts) > 1:
+        arg = parts[1].lower()
+        if arg in ["today", "bugun", "kun"]:
+            deleted = await db.clear_activity_stats(chat_id, date_str=today_str)
+            clear_active_tag_caches(chat_id)
+            resp = await message.reply(
+                f"📅 <b>Bugungi ({today_str}) barcha faollik statistikasi tozalandi!</b> ({deleted} ta yozuv o'chirildi)",
+                parse_mode="HTML"
+            )
+            auto_delete(message, delay=10)
+            auto_delete(resp, delay=20)
+            return
+        elif arg in ["month", "oy", "oylik"]:
+            deleted = await db.clear_activity_stats(chat_id, month_str=month_str)
+            clear_active_tag_caches(chat_id)
+            resp = await message.reply(
+                f"🗓 <b>Joriy ({month_str}) oylik barcha faollik statistikasi tozalandi!</b> ({deleted} ta yozuv o'chirildi)",
+                parse_mode="HTML"
+            )
+            auto_delete(message, delay=10)
+            auto_delete(resp, delay=20)
+            return
+        elif arg in ["all", "hamma", "barchasi", "toza"]:
+            deleted = await db.clear_activity_stats(chat_id)
+            clear_active_tag_caches(chat_id)
+            resp = await message.reply(
+                f"💥 <b>Guruhdagi butun faollik tarixi to'liq tozalandi!</b> ({deleted} ta yozuv o'chirildi)",
+                parse_mode="HTML"
+            )
+            auto_delete(message, delay=10)
+            auto_delete(resp, delay=20)
+            return
+
+    # 3. Agar parametr ko'rsatilmagan bo'lsa: Interaktiv boshqaruv tugmalari
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"📅 Bugunni tozalash ({today_str})", callback_data="reset_act:today")
+            ],
+            [
+                InlineKeyboardButton(text=f"🗓 Shu oyni tozalash ({month_str})", callback_data="reset_act:month")
+            ],
+            [
+                InlineKeyboardButton(text="💥 Barchasini to'liq tozalash", callback_data="reset_act:all")
+            ],
+            [
+                InlineKeyboardButton(text="❌ Bekor qilish", callback_data="reset_act:cancel")
+            ]
+        ]
+    )
+    resp = await message.reply(
+        "🗑 <b>FAOLLIK STATISTIKASINI TOZALASH</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Qaysi davr faollik statistikasini tozalamoqchisiz?\n\n"
+        "• <b>Bugunni tozalash:</b> Faqat bugungi xabarlar hisobini 0 ga tushiradi.\n"
+        "• <b>Shu oyni tozalash:</b> Joriy oylik reytingni tozalaydi.\n"
+        "• <b>Barchasini tozalash:</b> Butun guruh arxivini o'chiradi.\n\n"
+        "💡 <i>Yoki to'g'ridan-to'g'ri: <code>/resetactive today</code> | <code>/resetactive all</code> | <code>/resetactive @username</code></i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    auto_delete(message, delay=20)
+    auto_delete(resp, delay=60)
+
+@router.callback_query(F.data.startswith("reset_act:"), IsGroupFilter())
+async def cb_reset_activity_action(callback: CallbackQuery, bot: Bot):
+    chat_id = callback.message.chat.id
+    from bot.filters.admin import is_user_admin
+    if not await is_user_admin(bot, chat_id, callback.from_user.id):
+        await callback.answer("❌ Bu amal faqat adminlar uchun!", show_alert=True)
+        return
+
+    action = callback.data.split(":")[1]
+    gmt_offset = await db.get_gmt_offset(chat_id)
+    today_str = get_chat_today_date_str(gmt_offset)
+    month_str = get_chat_current_month_str(gmt_offset)
+
+    if action == "cancel":
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer("Bekor qilindi.")
+        return
+
+    deleted = 0
+    title = ""
+    if action == "today":
+        deleted = await db.clear_activity_stats(chat_id, date_str=today_str)
+        title = f"📅 <b>Bugungi ({today_str}) faollik statistikasi tozalandi!</b>"
+    elif action == "month":
+        deleted = await db.clear_activity_stats(chat_id, month_str=month_str)
+        title = f"🗓 <b>Joriy ({month_str}) oylik faollik statistikasi tozalandi!</b>"
+    elif action == "all":
+        deleted = await db.clear_activity_stats(chat_id)
+        title = "💥 <b>Barcha faollik tarixi to'liq tozalandi!</b>"
+
+    clear_active_tag_caches(chat_id)
+    text = (
+        f"{title}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Admin:</b> {html.escape(callback.from_user.full_name)}\n"
+        f"🗑 <b>O'chirilgan yozuvlar:</b> {deleted} ta"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Muvaffaqiyatli tozalandi!")
+

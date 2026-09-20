@@ -100,6 +100,20 @@ def is_valid_activity_message(message: Message) -> bool:
 
     return True
 
+def clear_active_tag_caches(chat_id: Optional[int] = None):
+    """Xotiradagi xabar ID va cooldown keshlarini tozalaydi."""
+    global _recent_user_messages, _processed_message_ids
+    if chat_id is None:
+        _recent_user_messages.clear()
+        _processed_message_ids.clear()
+    else:
+        for k in list(_recent_user_messages.keys()):
+            if k[0] == chat_id:
+                _recent_user_messages.pop(k, None)
+        for k in list(_processed_message_ids.keys()):
+            if k[0] == chat_id:
+                _processed_message_ids.pop(k, None)
+
 # Faollik darajalari (Tiers)
 # (xabarlar_soni, tag_nomi, badge_emoji)
 ACTIVITY_TIERS = [

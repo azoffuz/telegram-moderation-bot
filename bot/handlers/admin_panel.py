@@ -182,6 +182,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
                 )
             ],
             [
+                InlineKeyboardButton(
+                    text="🗑 Faollik Statistikalarni Tozalash",
+                    callback_data="panel:clear_active_menu"
+                )
+            ],
+            [
                 InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:main")
             ]
         ]
@@ -301,6 +307,84 @@ async def cb_toggle_setting(callback: CallbackQuery, bot: Bot):
 
     status_str = "YOQILDI ✅" if new_val else "O'CHIRILDI ❌"
     await callback.answer(f"Sozlama o'zgardi: {status_str}")
+
+@router.callback_query(F.data == "panel:clear_active_menu")
+async def cb_panel_clear_active_menu(callback: CallbackQuery):
+    """Admin panel orqali faollik statistikasini tozalash menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    gmt_offset = await db.get_gmt_offset(chat_id)
+    from bot.services.active_tag import get_chat_today_date_str, get_chat_current_month_str
+    today_str = get_chat_today_date_str(gmt_offset)
+    month_str = get_chat_current_month_str(gmt_offset)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"📅 Bugunni tozalash ({today_str})", callback_data="panel:clear_act:today")
+            ],
+            [
+                InlineKeyboardButton(text=f"🗓 Oylikni tozalash ({month_str})", callback_data="panel:clear_act:month")
+            ],
+            [
+                InlineKeyboardButton(text="💥 Barcha faollik tarixini tozalash", callback_data="panel:clear_act:all")
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:settings")
+            ]
+        ]
+    )
+    text = (
+        f"🗑 <b>FAOLLIK STATISTIKASINI TOZALASH</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💬 <b>Guruh ID:</b> <code>{chat_id}</code>\n\n"
+        f"Qaysi davr ma'lumotlarini tozalamoqchisiz?\n"
+        f"Kerakli bo'limni tanlang:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("panel:clear_act:"))
+async def cb_panel_clear_act_exec(callback: CallbackQuery):
+    """Admin panel orqali tozalash amalini bajarish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    action = callback.data.split(":")[2]
+    gmt_offset = await db.get_gmt_offset(chat_id)
+    from bot.services.active_tag import (
+        get_chat_today_date_str,
+        get_chat_current_month_str,
+        clear_active_tag_caches
+    )
+    today_str = get_chat_today_date_str(gmt_offset)
+    month_str = get_chat_current_month_str(gmt_offset)
+
+    deleted = 0
+    if action == "today":
+        deleted = await db.clear_activity_stats(chat_id, date_str=today_str)
+    elif action == "month":
+        deleted = await db.clear_activity_stats(chat_id, month_str=month_str)
+    elif action == "all":
+        deleted = await db.clear_activity_stats(chat_id)
+
+    clear_active_tag_caches(chat_id)
+    await callback.answer(f"✅ Faollik statistikasi tozalandi! ({deleted} ta o'chirildi)", show_alert=True)
+
+    # Sozlamalar sahifasiga qaytarish
+    kb = await settings_keyboard(chat_id)
+    text = (
+        f"⚙️ <b>GURUH HIMOYA SOZLAMALARI</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"💬 <b>Guruh ID:</b> <code>{chat_id}</code>\n\n"
+        f"Tugmalarni bosish orqali kerakli himoyani darhol <b>yoqishingiz</b> yoki <b>o'chirishingiz</b> mumkin:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data == "panel:admins")
 async def cb_panel_admins(callback: CallbackQuery):
