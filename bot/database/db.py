@@ -1446,6 +1446,139 @@ class Database:
             logger.error(f"get_daily_activity_leaderboard xatosi: {e}")
         return results
 
+    async def get_monthly_activity_leaderboard(self, chat_id: int, month_str: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Oylik eng faol a'zolar ro'yxatini qaytaradi (masalan month_str='2026-09')."""
+        results = []
+        pattern = f"{month_str}%"
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT a.user_id, SUM(a.message_count) as total_count, u.full_name, u.username
+                        FROM user_daily_activity a
+                        LEFT JOIN known_users u ON a.user_id = u.user_id
+                        WHERE a.chat_id = $1 AND a.activity_date LIKE $2
+                        GROUP BY a.user_id, u.full_name, u.username
+                        ORDER BY total_count DESC
+                        LIMIT $3;
+                    """, chat_id, pattern, limit)
+                    for r in rows:
+                        results.append({
+                            "user_id": r["user_id"],
+                            "message_count": int(r["total_count"] or 0),
+                            "full_name": r["full_name"] or "Foydalanuvchi",
+                            "username": r["username"]
+                        })
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("""
+                    SELECT a.user_id, SUM(a.message_count) as total_count, u.full_name, u.username
+                    FROM user_daily_activity a
+                    LEFT JOIN known_users u ON a.user_id = u.user_id
+                    WHERE a.chat_id = ? AND a.activity_date LIKE ?
+                    GROUP BY a.user_id
+                    ORDER BY total_count DESC
+                    LIMIT ?;
+                """, (chat_id, pattern, limit)) as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        results.append({
+                            "user_id": r[0],
+                            "message_count": int(r[1] or 0),
+                            "full_name": r[2] or "Foydalanuvchi",
+                            "username": r[3]
+                        })
+        except Exception as e:
+            logger.error(f"get_monthly_activity_leaderboard xatosi: {e}")
+        return results
+
+    async def get_user_activity_stats(self, chat_id: int, user_id: int, today_str: str, month_str: str) -> Dict[str, Any]:
+        """A'zoning shaxsiy bugungi va oylik statistikasini qaytaradi."""
+        res = {
+            "today_messages": 0,
+            "today_rank": None,
+            "month_messages": 0,
+            "month_rank": None,
+            "is_active_granted": False
+        }
+        month_pattern = f"{month_str}%"
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    # Bugungi xabarlari
+                    t_row = await conn.fetchrow(
+                        "SELECT message_count, is_active_granted FROM user_daily_activity WHERE chat_id = $1 AND user_id = $2 AND activity_date = $3",
+                        chat_id, user_id, today_str
+                    )
+                    if t_row:
+                        res["today_messages"] = t_row["message_count"]
+                        res["is_active_granted"] = t_row["is_active_granted"]
+                        # Bugungi o'rni
+                        rank_row = await conn.fetchval(
+                            "SELECT COUNT(*) + 1 FROM user_daily_activity WHERE chat_id = $1 AND activity_date = $2 AND message_count > $3",
+                            chat_id, today_str, res["today_messages"]
+                        )
+                        res["today_rank"] = rank_row
+
+                    # Oylik jami xabarlari
+                    m_row = await conn.fetchval(
+                        "SELECT SUM(message_count) FROM user_daily_activity WHERE chat_id = $1 AND user_id = $2 AND activity_date LIKE $3",
+                        chat_id, user_id, month_pattern
+                    )
+                    res["month_messages"] = int(m_row or 0)
+                    if res["month_messages"] > 0:
+                        m_rank = await conn.fetchval("""
+                            SELECT COUNT(*) + 1 FROM (
+                                SELECT SUM(message_count) as total
+                                FROM user_daily_activity
+                                WHERE chat_id = $1 AND activity_date LIKE $2
+                                GROUP BY user_id
+                                HAVING SUM(message_count) > $3
+                            ) sub;
+                        """, chat_id, month_pattern, res["month_messages"])
+                        res["month_rank"] = m_rank
+
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(
+                    "SELECT message_count, is_active_granted FROM user_daily_activity WHERE chat_id = ? AND user_id = ? AND activity_date = ?",
+                    (chat_id, user_id, today_str)
+                ) as cursor:
+                    t_row = await cursor.fetchone()
+                    if t_row:
+                        res["today_messages"] = t_row[0]
+                        res["is_active_granted"] = bool(t_row[1])
+                        async with self.sqlite_conn.execute(
+                            "SELECT COUNT(*) + 1 FROM user_daily_activity WHERE chat_id = ? AND activity_date = ? AND message_count > ?",
+                            (chat_id, today_str, res["today_messages"])
+                        ) as r_cursor:
+                            r_row = await r_cursor.fetchone()
+                            if r_row:
+                                res["today_rank"] = r_row[0]
+
+                async with self.sqlite_conn.execute(
+                    "SELECT SUM(message_count) FROM user_daily_activity WHERE chat_id = ? AND user_id = ? AND activity_date LIKE ?",
+                    (chat_id, user_id, month_pattern)
+                ) as cursor:
+                    m_row = await cursor.fetchone()
+                    res["month_messages"] = int(m_row[0] or 0) if (m_row and m_row[0] is not None) else 0
+
+                if res["month_messages"] > 0:
+                    async with self.sqlite_conn.execute("""
+                        SELECT COUNT(*) + 1 FROM (
+                            SELECT SUM(message_count) as total
+                            FROM user_daily_activity
+                            WHERE chat_id = ? AND activity_date LIKE ?
+                            GROUP BY user_id
+                            HAVING SUM(message_count) > ?
+                        ) sub;
+                    """, (chat_id, month_pattern, res["month_messages"])) as cursor:
+                        m_rank_row = await cursor.fetchone()
+                        if m_rank_row:
+                            res["month_rank"] = m_rank_row[0]
+
+        except Exception as e:
+            logger.error(f"get_user_activity_stats xatosi: {e}")
+        return res
+
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""
         if self.pg_pool:
