@@ -333,22 +333,25 @@ async def cb_panel_clear_active_menu(callback: CallbackQuery):
                 InlineKeyboardButton(text="💥 Barcha faollik tarixini tozalash", callback_data="panel:clear_act:all")
             ],
             [
+                InlineKeyboardButton(text="🏷 Barcha a'zolardan teglarni tozalash", callback_data="panel:clear_act:tags")
+            ],
+            [
                 InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:settings")
             ]
         ]
     )
     text = (
-        f"🗑 <b>FAOLLIK STATISTIKASINI TOZALASH</b>\n"
+        f"🗑 <b>FAOLLIK VA TEGLARNI TOZALASH</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💬 <b>Guruh ID:</b> <code>{chat_id}</code>\n\n"
-        f"Qaysi davr ma'lumotlarini tozalamoqchisiz?\n"
+        f"Qaysi ma'lumotlarni tozalamoqchisiz?\n"
         f"Kerakli bo'limni tanlang:"
     )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data.startswith("panel:clear_act:"))
-async def cb_panel_clear_act_exec(callback: CallbackQuery):
+async def cb_panel_clear_act_exec(callback: CallbackQuery, bot: Bot):
     """Admin panel orqali tozalash amalini bajarish."""
     if not await db.is_bot_admin(callback.from_user.id):
         await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
@@ -360,21 +363,27 @@ async def cb_panel_clear_act_exec(callback: CallbackQuery):
     from bot.services.active_tag import (
         get_chat_today_date_str,
         get_chat_current_month_str,
-        clear_active_tag_caches
+        clear_active_tag_caches,
+        revoke_all_chat_tags
     )
     today_str = get_chat_today_date_str(gmt_offset)
     month_str = get_chat_current_month_str(gmt_offset)
 
-    deleted = 0
-    if action == "today":
-        deleted = await db.clear_activity_stats(chat_id, date_str=today_str)
-    elif action == "month":
-        deleted = await db.clear_activity_stats(chat_id, month_str=month_str)
-    elif action == "all":
-        deleted = await db.clear_activity_stats(chat_id)
+    if action == "tags":
+        await callback.answer("⏳ Teglar olib tashlanmoqda...")
+        s_cnt, f_cnt = await revoke_all_chat_tags(bot, chat_id)
+        await callback.answer(f"✅ {s_cnt} nafar a'zodan teglar olib tashlandi!", show_alert=True)
+    else:
+        deleted = 0
+        if action == "today":
+            deleted = await db.clear_activity_stats(chat_id, date_str=today_str)
+        elif action == "month":
+            deleted = await db.clear_activity_stats(chat_id, month_str=month_str)
+        elif action == "all":
+            deleted = await db.clear_activity_stats(chat_id)
 
-    clear_active_tag_caches(chat_id)
-    await callback.answer(f"✅ Faollik statistikasi tozalandi! ({deleted} ta o'chirildi)", show_alert=True)
+        clear_active_tag_caches(chat_id)
+        await callback.answer(f"✅ Faollik statistikasi tozalandi! ({deleted} ta o'chirildi)", show_alert=True)
 
     # Sozlamalar sahifasiga qaytarish
     kb = await settings_keyboard(chat_id)

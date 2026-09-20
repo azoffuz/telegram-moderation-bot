@@ -14,6 +14,7 @@ from bot.services.logger import send_log
 from bot.services.active_tag import (
     grant_active_tag,
     revoke_active_tag,
+    revoke_all_chat_tags,
     get_chat_today_date_str,
     get_chat_current_month_str,
     get_tier_info,
@@ -460,6 +461,19 @@ async def cmd_reset_active(message: Message, bot: Bot):
             auto_delete(message, delay=10)
             auto_delete(resp, delay=20)
             return
+        elif arg in ["tags", "teglar", "teglarni", "tag"]:
+            wait_msg = await message.reply("⏳ <b>Barcha a'zolardan teglar olib tashlanmoqda, iltimos kuting...</b>", parse_mode="HTML")
+            s_cnt, f_cnt = await revoke_all_chat_tags(bot, chat_id)
+            text = (
+                f"🧹 <b>Barcha a'zolardan teglar tozalandi!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>Olib tashlandi:</b> {s_cnt} nafar a'zodan\n"
+                f"👤 <b>Admin:</b> {html.escape(message.from_user.full_name)}"
+            )
+            await wait_msg.edit_text(text, parse_mode="HTML")
+            auto_delete(message, delay=10)
+            auto_delete(wait_msg, delay=40)
+            return
 
     # 3. Agar parametr ko'rsatilmagan bo'lsa: Interaktiv boshqaruv tugmalari
     kb = InlineKeyboardMarkup(
@@ -474,23 +488,63 @@ async def cmd_reset_active(message: Message, bot: Bot):
                 InlineKeyboardButton(text="💥 Barchasini to'liq tozalash", callback_data="reset_act:all")
             ],
             [
+                InlineKeyboardButton(text="🏷 Barcha teglarni olib tashlash (Clear Tags)", callback_data="reset_act:tags")
+            ],
+            [
                 InlineKeyboardButton(text="❌ Bekor qilish", callback_data="reset_act:cancel")
             ]
         ]
     )
     resp = await message.reply(
-        "🗑 <b>FAOLLIK STATISTIKASINI TOZALASH</b>\n"
+        "🗑 <b>FAOLLIK VA TEGLARNI TOZALASH</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "Qaysi davr faollik statistikasini tozalamoqchisiz?\n\n"
+        "Qaysi ma'lumotlarni tozalamoqchisiz?\n\n"
         "• <b>Bugunni tozalash:</b> Faqat bugungi xabarlar hisobini 0 ga tushiradi.\n"
         "• <b>Shu oyni tozalash:</b> Joriy oylik reytingni tozalaydi.\n"
-        "• <b>Barchasini tozalash:</b> Butun guruh arxivini o'chiradi.\n\n"
-        "💡 <i>Yoki to'g'ridan-to'g'ri: <code>/resetactive today</code> | <code>/resetactive all</code> | <code>/resetactive @username</code></i>",
+        "• <b>Barchasini tozalash:</b> Butun guruh arxivini o'chiradi.\n"
+        "• <b>Teglarni olib tashlash:</b> Barcha a'zolarning Telegramdagi teglarini olib tashlaydi.\n\n"
+        "💡 <i>Tezkor buyruqlar:</i>\n"
+        "<code>/cleartags</code> — barcha teglarni darhol tozalash\n"
+        "<code>/resetactive today</code> | <code>/resetactive all</code> | <code>/resetactive @username</code>",
         reply_markup=kb,
         parse_mode="HTML"
     )
     auto_delete(message, delay=20)
     auto_delete(resp, delay=60)
+
+@router.message(Command("cleartags", "clear_tags", "resettags", "reset_tags", "cleartag"), IsGroupFilter())
+async def cmd_clear_tags(message: Message, bot: Bot):
+    """Guruhdagi barcha a'zolardan berilgan teglarni to'liq olib tashlash."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    chat_id = message.chat.id
+    wait_msg = await message.reply("⏳ <b>Barcha a'zolardan teglar olib tashlanmoqda, iltimos kuting...</b>", parse_mode="HTML")
+    s_cnt, f_cnt = await revoke_all_chat_tags(bot, chat_id)
+
+    text = (
+        f"🧹 <b>BARCHA TEGLAR TOZALANDI!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"✅ <b>Olib tashlandi:</b> {s_cnt} nafar a'zodan\n"
+        f"👤 <b>Admin:</b> {html.escape(message.from_user.full_name)}\n"
+        f"⚡️ <i>Guruh a'zolari oddiy holatga qaytarildi.</i>"
+    )
+    await wait_msg.edit_text(text, parse_mode="HTML")
+    auto_delete(message, delay=10)
+    auto_delete(wait_msg, delay=60)
+
+    await send_log(
+        bot,
+        f"🏷 <b>BARCHA TEGLAR TOZALANDI</b>\n"
+        f"Admin: {html.escape(message.from_user.full_name)}\n"
+        f"Guruh: {message.chat.title}\n"
+        f"Muvaffaqiyatli: {s_cnt} ta",
+        category="members"
+    )
 
 @router.callback_query(F.data.startswith("reset_act:"), IsGroupFilter())
 async def cb_reset_activity_action(callback: CallbackQuery, bot: Bot):
@@ -524,6 +578,24 @@ async def cb_reset_activity_action(callback: CallbackQuery, bot: Bot):
     elif action == "all":
         deleted = await db.clear_activity_stats(chat_id)
         title = "💥 <b>Barcha faollik tarixi to'liq tozalandi!</b>"
+    elif action == "tags":
+        try:
+            await callback.message.edit_text("⏳ <b>Teglar olib tashlanmoqda...</b>", parse_mode="HTML")
+        except Exception:
+            pass
+        s_cnt, f_cnt = await revoke_all_chat_tags(bot, chat_id)
+        text = (
+            f"🧹 <b>BARCHA TEGLAR TOZALANDI!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"✅ <b>Olib tashlandi:</b> {s_cnt} nafar a'zodan\n"
+            f"👤 <b>Admin:</b> {html.escape(callback.from_user.full_name)}"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="HTML")
+        except Exception:
+            pass
+        await callback.answer(f"✅ {s_cnt} nafar a'zodan teglar tozalandi!")
+        return
 
     clear_active_tag_caches(chat_id)
     text = (

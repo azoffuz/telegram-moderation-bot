@@ -172,6 +172,7 @@ async def grant_active_tag(bot: Bot, chat_id: int, user_id: int, custom_title: s
             user_id=user_id,
             tag=clean_tag
         )
+        await db.record_active_tag_granted(chat_id, user_id, clean_tag)
         return True, f"«{clean_tag}» tegi muvaffaqiyatli berildi!"
     except TelegramBadRequest as e:
         err_msg = str(e).lower()
@@ -185,6 +186,7 @@ async def grant_active_tag(bot: Bot, chat_id: int, user_id: int, custom_title: s
                     custom_title=clean_tag
                 )
                 invalidate_chat_admins_cache(chat_id)
+                await db.record_active_tag_granted(chat_id, user_id, clean_tag)
                 return True, f"Admin a'zo uchun «{clean_tag}» unvoni o'rnatildi!"
             except Exception as e2:
                 return False, f"Admin unvonini o'rnatishda xatolik: {e2}"
@@ -209,6 +211,7 @@ async def revoke_active_tag(bot: Bot, chat_id: int, user_id: int) -> Tuple[bool,
             user_id=user_id,
             tag=""
         )
+        await db.record_active_tag_revoked(chat_id, user_id)
         return True, "Teg muvaffaqiyatli olib tashlandi."
     except TelegramBadRequest as e:
         err_msg = str(e).lower()
@@ -221,13 +224,64 @@ async def revoke_active_tag(bot: Bot, chat_id: int, user_id: int) -> Tuple[bool,
                     custom_title=""
                 )
                 invalidate_chat_admins_cache(chat_id)
+                await db.record_active_tag_revoked(chat_id, user_id)
                 return True, "Admin unvoni olib tashlandi."
             except Exception as e2:
                 return False, f"Admin unvonini olib tashlashda xatolik: {e2}"
+        if "user_not_participant" in err_msg:
+            await db.record_active_tag_revoked(chat_id, user_id)
+            return True, "Foydalanuvchi guruhda mavjud emas."
         return False, f"Tegni olib tashlashda xatolik: {e}"
     except Exception as e:
         logger.error(f"revoke_active_tag xatosi: {e}")
         return False, f"Xatolik: {e}"
+
+async def revoke_all_chat_tags(bot: Bot, chat_id: int) -> Tuple[int, int]:
+    """
+    Guruhdagi barcha a'zolarning teglarini to'liq olib tashlaydi:
+    1. active_tagged_users va user_daily_activity dagi a'zolarni aniqlaydi.
+    2. get_chat_administrators dagi teg berilgan adminlarni aniqlaydi.
+    3. Telegram API orqali teglarini o'chiradi (Rate Limit himoyasi bilan).
+    4. Bazadagi yozuvlarni tozalaydi.
+    Qaytaradi: (success_count, fail_count)
+    """
+    candidate_user_ids = set(await db.get_all_tagged_user_ids(chat_id))
+
+    # Administratorlarni tekshiramiz (agar ularga custom_title berilgan bo'lsa)
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        bot_info = await bot.get_me()
+        for adm in admins:
+            if adm.user.id != bot_info.id and adm.status != "creator":
+                c_title = getattr(adm, "custom_title", "") or ""
+                if any(t[1] in c_title for t in ACTIVITY_TIERS) or "Active" in c_title or adm.user.id in candidate_user_ids:
+                    candidate_user_ids.add(adm.user.id)
+    except Exception as e:
+        logger.error(f"revoke_all_chat_tags get_admins xatosi: {e}")
+
+    success_count = 0
+    fail_count = 0
+
+    bot_info = await bot.get_me()
+    for u_id in candidate_user_ids:
+        if u_id == bot_info.id:
+            continue
+        try:
+            ok, _ = await revoke_active_tag(bot, chat_id, u_id)
+            if ok:
+                success_count += 1
+            else:
+                fail_count += 1
+        except Exception:
+            fail_count += 1
+        # Telegram API FloodWait dan himoyalanish
+        await asyncio.sleep(0.06)
+
+    # Bazani tozalaymiz
+    await db.clear_all_active_tags_in_db(chat_id)
+    clear_active_tag_caches(chat_id)
+
+    return success_count, fail_count
 
 async def process_user_activity_and_check_reward(bot: Bot, chat_id: int, user, message: Message, gmt_offset: int = 5):
     """

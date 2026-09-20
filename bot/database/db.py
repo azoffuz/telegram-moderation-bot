@@ -350,6 +350,33 @@ class Database:
         except Exception:
             pass
 
+        # active_tagged_users jadvalini yaratish (kimda teg borligini kuzatish uchun)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS active_tagged_users (
+                            chat_id BIGINT,
+                            user_id BIGINT,
+                            tag_name TEXT DEFAULT 'Active',
+                            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (chat_id, user_id)
+                        );
+                    """)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS active_tagged_users (
+                        chat_id INTEGER,
+                        user_id INTEGER,
+                        tag_name TEXT DEFAULT 'Active',
+                        granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (chat_id, user_id)
+                    );
+                """)
+                await self.sqlite_conn.commit()
+        except Exception:
+            pass
+
     async def _seed_default_bad_words(self):
         """Baza bo'sh bo'lsa standart taqiqlangan so'zlarni kiritadi."""
         existing = await self.get_all_bad_words()
@@ -1642,6 +1669,93 @@ class Database:
             logger.error(f"clear_activity_stats xatosi: {e}")
 
         return deleted_count
+
+    async def record_active_tag_granted(self, chat_id: int, user_id: int, tag_name: str = "Active"):
+        """Foydalanuvchiga teg berilganini active_tagged_users jadvalida saqlaydi."""
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO active_tagged_users (chat_id, user_id, tag_name, granted_at)
+                        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+                        ON CONFLICT (chat_id, user_id)
+                        DO UPDATE SET tag_name = $3, granted_at = CURRENT_TIMESTAMP;
+                    """, chat_id, user_id, tag_name)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO active_tagged_users (chat_id, user_id, tag_name, granted_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(chat_id, user_id)
+                    DO UPDATE SET tag_name = excluded.tag_name, granted_at = CURRENT_TIMESTAMP;
+                """, (chat_id, user_id, tag_name))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"record_active_tag_granted xatosi: {e}")
+
+    async def record_active_tag_revoked(self, chat_id: int, user_id: int):
+        """Foydalanuvchidan teg olib tashlanganini active_tagged_users jadvalidan o'chiradi."""
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("DELETE FROM active_tagged_users WHERE chat_id = $1 AND user_id = $2", chat_id, user_id)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("DELETE FROM active_tagged_users WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"record_active_tag_revoked xatosi: {e}")
+
+    async def get_all_tagged_user_ids(self, chat_id: int) -> List[int]:
+        """Guruhda teg olgan barcha foydalanuvchilar ID larini oladi."""
+        user_ids = set()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    # 1. active_tagged_users dan
+                    rows1 = await conn.fetch("SELECT user_id FROM active_tagged_users WHERE chat_id = $1", chat_id)
+                    for r in rows1:
+                        user_ids.add(r["user_id"])
+                    # 2. user_daily_activity dan (is_active_granted yoki 10+ xabar yozganlar)
+                    rows2 = await conn.fetch(
+                        "SELECT DISTINCT user_id FROM user_daily_activity WHERE chat_id = $1 AND (is_active_granted = TRUE OR message_count >= 10)",
+                        chat_id
+                    )
+                    for r in rows2:
+                        user_ids.add(r["user_id"])
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("SELECT user_id FROM active_tagged_users WHERE chat_id = ?", (chat_id,)) as cursor:
+                    rows1 = await cursor.fetchall()
+                    for r in rows1:
+                        user_ids.add(r[0])
+                async with self.sqlite_conn.execute(
+                    "SELECT DISTINCT user_id FROM user_daily_activity WHERE chat_id = ? AND (is_active_granted = 1 OR message_count >= 10)",
+                    (chat_id,)
+                ) as cursor:
+                    rows2 = await cursor.fetchall()
+                    for r in rows2:
+                        user_ids.add(r[0])
+        except Exception as e:
+            logger.error(f"get_all_tagged_user_ids xatosi: {e}")
+
+        return list(user_ids)
+
+    async def clear_all_active_tags_in_db(self, chat_id: int):
+        """Barcha a'zolarning teg maqomini bazada tozalaydi."""
+        # RAM keshdagi granted holatini False qilamiz
+        for k, v in list(self._daily_activity_cache.items()):
+            if k[0] == chat_id:
+                self._daily_activity_cache[k] = (v[0], False)
+
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("DELETE FROM active_tagged_users WHERE chat_id = $1", chat_id)
+                    await conn.execute("UPDATE user_daily_activity SET is_active_granted = FALSE WHERE chat_id = $1", chat_id)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("DELETE FROM active_tagged_users WHERE chat_id = ?", (chat_id,))
+                await self.sqlite_conn.execute("UPDATE user_daily_activity SET is_active_granted = 0 WHERE chat_id = ?", (chat_id,))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"clear_all_active_tags_in_db xatosi: {e}")
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""
