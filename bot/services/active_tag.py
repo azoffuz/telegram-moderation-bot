@@ -1,3 +1,5 @@
+import re
+import time
 import logging
 import html
 import asyncio
@@ -5,12 +7,73 @@ from datetime import datetime, timezone, timedelta
 from typing import Tuple, Optional, List, Dict, Any
 
 from aiogram import Bot
+from aiogram.types import Message
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.database import db
 from bot.filters.admin import invalidate_chat_admins_cache
 
 logger = logging.getLogger(__name__)
+
+# Foydalanuvchining oxirgi xabarlari keshi: {(chat_id, user_id): (timestamp, text_lower)}
+_recent_user_messages: Dict[Tuple[int, int], Tuple[float, str]] = {}
+
+def is_valid_activity_message(message: Message) -> bool:
+    """
+    Xabar faollik hisobiga o'tishi mumkinligini tekshiradi:
+    1. Kamida 3 ta mustaqil so'zdan iborat bo'lishi (2 ta so'zdan oshishi sharti).
+    2. Kamida 8 ta belgidan iborat bo'lishi.
+    3. Buyruq bo'lmasligi ('/' bilan boshlanmasligi).
+    4. Bir xil harflar takroridan iborat bo'lmasligi (aaaa, qweqwe).
+    5. Bir xil xabarni qayta-qayta nusxalab yubormasligi (Anti-Duplicate).
+    6. Minimal 4 soniyalik tanaffus (Anti-Fast-Spam Cooldown).
+    """
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        return False
+
+    # 1. Buyruqlar hisobga o'tmaydi
+    if text.startswith("/"):
+        return False
+
+    # 2. 2 ta so'zdan oshishi sharti (kamida 3 ta to'liq so'z)
+    # Lotin, krill harflari va raqamlardan iborat so'zlarni ajratamiz
+    words = [w for w in re.findall(r"\b[\w\u0400-\u04FF']+\b", text) if len(w) >= 2]
+    if len(words) <= 2:
+        return False
+
+    # 3. Minimal uzunlik
+    if len(text) < 8:
+        return False
+
+    # 4. Be'mani harflar ketma-ketligi (Gibberish) yoki bir xil harflar takrori
+    clean_lower = re.sub(r"\s+", "", text.lower())
+    if len(set(clean_lower)) < 4:
+        return False
+
+    # Bir xil harf ketma-ket 4 martadan ko'p takrorlansa (masalan "soooooloooom")
+    if re.search(r"(.)\1{4,}", clean_lower):
+        return False
+
+    # 5. Cooldown va Anti-Duplicate tekshiruvi
+    now = time.time()
+    chat_id = message.chat.id
+    user_id = message.from_user.id if message.from_user else 0
+    if not user_id:
+        return False
+
+    cache_key = (chat_id, user_id)
+    if cache_key in _recent_user_messages:
+        last_time, last_text = _recent_user_messages[cache_key]
+        # Agar oxirgi xabardan keyin 4 soniya o'tmagan bo'lsa (Fast-spam)
+        if now - last_time < 4.0:
+            return False
+        # Agar aynan oldingi xabarni takrorlagan bo'lsa (Copy-paste spam)
+        if text.lower() == last_text:
+            return False
+
+    _recent_user_messages[cache_key] = (now, text.lower())
+    return True
 
 # Faollik darajalari (Tiers)
 # (xabarlar_soni, tag_nomi, badge_emoji)
@@ -127,11 +190,15 @@ async def revoke_active_tag(bot: Bot, chat_id: int, user_id: int) -> Tuple[bool,
         logger.error(f"revoke_active_tag xatosi: {e}")
         return False, f"Xatolik: {e}"
 
-async def process_user_activity_and_check_reward(bot: Bot, chat_id: int, user, gmt_offset: int = 5):
+async def process_user_activity_and_check_reward(bot: Bot, chat_id: int, user, message: Message, gmt_offset: int = 5):
     """
     Xabar kelganda foydalanuvchining kunlik faolligini hisoblaydi va 
     10, 30, 70, 150 ta xabar marralariga yetganda yangi Tier darajasini beradi.
     """
+    # Xabar mezonlarga mosligini tekshiramiz (kamida 3 ta so'z, cooldown, anti-duplicate)
+    if not is_valid_activity_message(message):
+        return
+
     date_str = get_chat_today_date_str(gmt_offset)
     count, granted = await db.record_user_activity(chat_id, user.id, date_str)
 

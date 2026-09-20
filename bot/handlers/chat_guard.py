@@ -447,4 +447,4 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # Xabar barcha moderatsiya filtrlaridan muvaffaqiyatli o'tgach, faollik hisobiga yoziladi (0ms kechikish)
     gmt_offset = int(settings.get("gmt_offset", 5))
     from bot.services.active_tag import process_user_activity_and_check_reward
-    asyncio.create_task(process_user_activity_and_check_reward(bot, chat_id, user, gmt_offset))
+    asyncio.create_task(process_user_activity_and_check_reward(bot, chat_id, user, message, gmt_offset))
