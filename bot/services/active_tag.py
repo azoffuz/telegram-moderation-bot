@@ -19,50 +19,40 @@ def get_chat_today_date_str(gmt_offset: int = 5) -> str:
 
 async def grant_active_tag(bot: Bot, chat_id: int, user_id: int, custom_title: str = "Active") -> Tuple[bool, str]:
     """
-    Foydalanuvchiga Telegramda rasmiy 'Active' (yoki ko'rsatilgan) unvonini beradi.
-    Xavfsizlik: Barcha ma'muriy huquqlar (o'chirish, cheklash va h.k.) False qilib qo'yiladi.
+    Foydalanuvchiga Telegramda rasmiy 'Active' tegini (Member Tag) beradi.
+    Telegramning 'Edit member tags' (can_manage_tags) huquqidan foydalanadi.
+    Foydalanuvchini admin qilish shart emas, u oddiy a'zo bo'lib qoladi.
     """
-    clean_title = custom_title.strip()[:16] or "Active"
+    clean_tag = custom_title.strip()[:16] or "Active"
+    
+    # 1. Telegramning rasmiy set_chat_member_tag metodi ('Edit member tags')
     try:
-        # 1. Xavfsiz huquqlar bilan administrator sifatida ko'tarish
-        await bot.promote_chat_member(
+        await bot.set_chat_member_tag(
             chat_id=chat_id,
             user_id=user_id,
-            can_invite_users=True,
-            can_change_info=False,
-            can_delete_messages=False,
-            can_restrict_members=False,
-            can_pin_messages=False,
-            can_promote_members=False,
-            can_manage_video_chats=False,
-            can_manage_topics=False,
-            is_anonymous=False
+            tag=clean_tag
         )
-        # 2. Telegram nishoni (Custom Title) ni o'rnatish
-        await bot.set_chat_administrator_custom_title(
-            chat_id=chat_id,
-            user_id=user_id,
-            custom_title=clean_title
-        )
-        # Keshni yangilaymiz
-        invalidate_chat_admins_cache(chat_id)
-        return True, f"«{clean_title}» unvoni muvaffaqiyatli berildi!"
+        return True, f"«{clean_tag}» tegi muvaffaqiyatli berildi!"
     except TelegramBadRequest as e:
         err_msg = str(e).lower()
-        if "not enough rights" in err_msg or "right_forbidden" in err_msg:
-            return False, "Botda guruh a'zolariga unvon berish huquqi (can_promote_members) yo'q. Iltimos botga admin ko'tarish huquqini bering!"
-        elif "user is an administrator of the chat" in err_msg:
-            # Foydalanuvchi allaqachon admin bo'lsa faqat unvonini yangilashga urinib ko'ramiz
+        
+        # Agar a'zo guruh admini bo'lsa (adminlar uchun custom_title ishlatiladi)
+        if "user is an administrator" in err_msg or "chat_admin_required" in err_msg:
             try:
                 await bot.set_chat_administrator_custom_title(
                     chat_id=chat_id,
                     user_id=user_id,
-                    custom_title=clean_title
+                    custom_title=clean_tag
                 )
                 invalidate_chat_admins_cache(chat_id)
-                return True, f"Mavjud admin uchun «{clean_title}» unvoni o'rnatildi!"
+                return True, f"Admin a'zo uchun «{clean_tag}» unvoni o'rnatildi!"
             except Exception as e2:
-                return False, f"Foydalanuvchi allaqachon boshqa admin tomonidan tayinlangan, unvonini o'zgartirib bo'lmadi: {e2}"
+                return False, f"Admin unvonini o'rnatishda xatolik: {e2}"
+
+        # Agar botda huquq yetishmasa
+        if "not enough rights" in err_msg or "right_forbidden" in err_msg or "can't edit tags" in err_msg:
+            return False, "Botda a'zolarga teg berish huquqi ('Edit member tags') yo'q. Iltimos bot sozlamalarida 'Edit member tags'ni yoqing!"
+        
         return False, f"Telegram xatoligi: {e}"
     except Exception as e:
         logger.error(f"grant_active_tag xatoligi: {e}")
@@ -70,27 +60,34 @@ async def grant_active_tag(bot: Bot, chat_id: int, user_id: int, custom_title: s
 
 async def revoke_active_tag(bot: Bot, chat_id: int, user_id: int) -> Tuple[bool, str]:
     """
-    Foydalanuvchining 'Active' unvonini bekor qilib, oddiy a'zo holatiga qaytaradi.
+    Foydalanuvchining 'Active' tegini olib tashlaydi.
     """
     try:
-        await bot.promote_chat_member(
+        # 1. A'zo tegini bo'shatish (tag=None yoki "")
+        await bot.set_chat_member_tag(
             chat_id=chat_id,
             user_id=user_id,
-            can_invite_users=False,
-            can_change_info=False,
-            can_delete_messages=False,
-            can_restrict_members=False,
-            can_pin_messages=False,
-            can_promote_members=False,
-            can_manage_video_chats=False,
-            can_manage_topics=False,
-            is_anonymous=False
+            tag=""
         )
-        invalidate_chat_admins_cache(chat_id)
-        return True, "«Active» unvoni muvaffaqiyatli olib tashlandi va oddiy a'zo holatiga qaytarildi."
+        return True, "«Active» tegi muvaffaqiyatli olib tashlandi."
+    except TelegramBadRequest as e:
+        err_msg = str(e).lower()
+        # Agar admin unvoni bo'lsa
+        if "user is an administrator" in err_msg or "chat_admin_required" in err_msg:
+            try:
+                await bot.set_chat_administrator_custom_title(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    custom_title=""
+                )
+                invalidate_chat_admins_cache(chat_id)
+                return True, "Admin unvoni olib tashlandi."
+            except Exception as e2:
+                return False, f"Admin unvonini olib tashlashda xatolik: {e2}"
+        return False, f"Tegni olib tashlashda xatolik: {e}"
     except Exception as e:
         logger.error(f"revoke_active_tag xatosi: {e}")
-        return False, f"Unvonni bekor qilishda xatolik: {e}"
+        return False, f"Xatolik: {e}"
 
 async def process_user_activity_and_check_reward(bot: Bot, chat_id: int, user, gmt_offset: int = 5):
     """
