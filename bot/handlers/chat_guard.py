@@ -440,3 +440,11 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             auto_delete(warn_msg, delay=10)
             asyncio.create_task(log_anti_location(bot=bot, user=user, chat=message.chat, loc_type=loc_type))
             return
+
+    # -------------------------------------------------------------
+    # 9. KUNLIK FOALLIK VA «ACTIVE» UNVONI HISOBI
+    # -------------------------------------------------------------
+    # Xabar barcha moderatsiya filtrlaridan muvaffaqiyatli o'tgach, faollik hisobiga yoziladi (0ms kechikish)
+    gmt_offset = int(settings.get("gmt_offset", 5))
+    from bot.services.active_tag import process_user_activity_and_check_reward
+    asyncio.create_task(process_user_activity_and_check_reward(bot, chat_id, user, gmt_offset))

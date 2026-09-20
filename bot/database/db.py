@@ -33,6 +33,7 @@ class Database:
         self._tracked_members_cache: Set[Tuple[int, int]] = set()
         self._newcomers_cache: Dict[Tuple[int, int], Optional[datetime]] = {}
         self._log_threads_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._daily_activity_cache: Dict[Tuple[int, int, str], Tuple[int, bool]] = {}
 
     async def connect(self):
         """Ma'lumotlar bazasiga ulanish va jadvallarni yaratish."""
@@ -160,6 +161,16 @@ class Database:
                         PRIMARY KEY (chat_id, user_id)
                     );
                 """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_daily_activity (
+                        chat_id BIGINT,
+                        user_id BIGINT,
+                        activity_date TEXT,
+                        message_count INT DEFAULT 1,
+                        is_active_granted BOOLEAN DEFAULT FALSE,
+                        PRIMARY KEY (chat_id, user_id, activity_date)
+                    );
+                """)
         else:
             await self.sqlite_conn.execute("""
                 CREATE TABLE IF NOT EXISTS warnings (
@@ -241,6 +252,16 @@ class Database:
                     PRIMARY KEY (chat_id, user_id)
                 );
             """)
+            await self.sqlite_conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_daily_activity (
+                    chat_id INTEGER,
+                    user_id INTEGER,
+                    activity_date TEXT,
+                    message_count INTEGER DEFAULT 1,
+                    is_active_granted BOOLEAN DEFAULT 0,
+                    PRIMARY KEY (chat_id, user_id, activity_date)
+                );
+            """)
             await self.sqlite_conn.commit()
 
         # Mavjud bazalar uchun xavfsiz ustun qo'shish (Migration)
@@ -259,6 +280,8 @@ class Database:
             ("nightmode_start_hour", "INT DEFAULT 23", "INTEGER DEFAULT 23"),
             ("nightmode_end_hour", "INT DEFAULT 7", "INTEGER DEFAULT 7"),
             ("last_auto_nightmode_action", "TEXT DEFAULT NULL", "TEXT DEFAULT NULL"),
+            ("active_tag_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("active_tag_threshold", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -292,6 +315,35 @@ class Database:
                         thread_id INTEGER,
                         thread_name TEXT,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                await self.sqlite_conn.commit()
+        except Exception:
+            pass
+
+        # user_daily_activity jadvalini yaratish (mavjud bazalar uchun ham)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS user_daily_activity (
+                            chat_id BIGINT,
+                            user_id BIGINT,
+                            activity_date TEXT,
+                            message_count INT DEFAULT 1,
+                            is_active_granted BOOLEAN DEFAULT FALSE,
+                            PRIMARY KEY (chat_id, user_id, activity_date)
+                        );
+                    """)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_daily_activity (
+                        chat_id INTEGER,
+                        user_id INTEGER,
+                        activity_date TEXT,
+                        message_count INTEGER DEFAULT 1,
+                        is_active_granted BOOLEAN DEFAULT 0,
+                        PRIMARY KEY (chat_id, user_id, activity_date)
                     );
                 """)
                 await self.sqlite_conn.commit()
@@ -420,6 +472,7 @@ class Database:
         "anti_custom_emoji": True,
         "anti_location": False,
         "auto_slowmode": False,
+        "active_tag_enabled": True,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:
@@ -506,6 +559,7 @@ class Database:
         "gmt_offset": 5,
         "nightmode_start_hour": 23,
         "nightmode_end_hour": 7,
+        "active_tag_threshold": 10,
     }
 
     async def get_chat_setting_int(self, chat_id: int, setting_name: str, default: Optional[int] = None) -> int:
@@ -1259,6 +1313,138 @@ class Database:
                 await self.sqlite_conn.commit()
         except Exception as e:
             logger.error(f"clear_log_threads xatosi: {e}")
+
+    # ==================== KUNLIK FOALLIK VA ACTIVE UNVONI ====================
+    async def record_user_activity(self, chat_id: int, user_id: int, date_str: str) -> Tuple[int, bool]:
+        """
+        Foydalanuvchining bugungi xabarlar sonini 1 taga oshiradi (0ms RAM kesh + DB).
+        Qaytadi: (message_count, is_active_granted)
+        """
+        cache_key = (chat_id, user_id, date_str)
+        if cache_key in self._daily_activity_cache:
+            count, granted = self._daily_activity_cache[cache_key]
+            count += 1
+            self._daily_activity_cache[cache_key] = (count, granted)
+        else:
+            count = 1
+            granted = False
+            try:
+                if self.is_postgres and self.pg_pool:
+                    async with self.pg_pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT message_count, is_active_granted FROM user_daily_activity WHERE chat_id = $1 AND user_id = $2 AND activity_date = $3",
+                            chat_id, user_id, date_str
+                        )
+                        if row:
+                            count = row["message_count"] + 1
+                            granted = bool(row["is_active_granted"])
+                elif self.sqlite_conn:
+                    async with self.sqlite_conn.execute(
+                        "SELECT message_count, is_active_granted FROM user_daily_activity WHERE chat_id = ? AND user_id = ? AND activity_date = ?",
+                        (chat_id, user_id, date_str)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if row:
+                            count = row[0] + 1
+                            granted = bool(row[1])
+            except Exception as e:
+                logger.error(f"record_user_activity select xatosi: {e}")
+            self._daily_activity_cache[cache_key] = (count, granted)
+
+        # Bazaga asinxron yangilab qo'yamiz
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO user_daily_activity (chat_id, user_id, activity_date, message_count, is_active_granted)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (chat_id, user_id, activity_date)
+                        DO UPDATE SET message_count = $4;
+                    """, chat_id, user_id, date_str, count, granted)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO user_daily_activity (chat_id, user_id, activity_date, message_count, is_active_granted)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(chat_id, user_id, activity_date)
+                    DO UPDATE SET message_count = ?;
+                """, (chat_id, user_id, date_str, count, 1 if granted else 0, count))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"record_user_activity save xatosi: {e}")
+
+        return count, granted
+
+    async def mark_active_granted(self, chat_id: int, user_id: int, date_str: str):
+        """Foydalanuvchiga bugun Active unvoni berilganini qayd etadi."""
+        cache_key = (chat_id, user_id, date_str)
+        count = 1
+        if cache_key in self._daily_activity_cache:
+            count = self._daily_activity_cache[cache_key][0]
+        self._daily_activity_cache[cache_key] = (count, True)
+
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO user_daily_activity (chat_id, user_id, activity_date, message_count, is_active_granted)
+                        VALUES ($1, $2, $3, $4, TRUE)
+                        ON CONFLICT (chat_id, user_id, activity_date)
+                        DO UPDATE SET is_active_granted = TRUE;
+                    """, chat_id, user_id, date_str, count)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT INTO user_daily_activity (chat_id, user_id, activity_date, message_count, is_active_granted)
+                    VALUES (?, ?, ?, ?, 1)
+                    ON CONFLICT(chat_id, user_id, activity_date)
+                    DO UPDATE SET is_active_granted = 1;
+                """, (chat_id, user_id, date_str, count))
+                await self.sqlite_conn.commit()
+        except Exception as e:
+            logger.error(f"mark_active_granted xatosi: {e}")
+
+    async def get_daily_activity_leaderboard(self, chat_id: int, date_str: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Kunlik eng faol a'zolar ro'yxatini qaytaradi."""
+        results = []
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT a.user_id, a.message_count, a.is_active_granted, u.full_name, u.username
+                        FROM user_daily_activity a
+                        LEFT JOIN known_users u ON a.user_id = u.user_id
+                        WHERE a.chat_id = $1 AND a.activity_date = $2
+                        ORDER BY a.message_count DESC
+                        LIMIT $3;
+                    """, chat_id, date_str, limit)
+                    for r in rows:
+                        results.append({
+                            "user_id": r["user_id"],
+                            "message_count": r["message_count"],
+                            "is_active_granted": r["is_active_granted"],
+                            "full_name": r["full_name"] or "Foydalanuvchi",
+                            "username": r["username"]
+                        })
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute("""
+                    SELECT a.user_id, a.message_count, a.is_active_granted, u.full_name, u.username
+                    FROM user_daily_activity a
+                    LEFT JOIN known_users u ON a.user_id = u.user_id
+                    WHERE a.chat_id = ? AND a.activity_date = ?
+                    ORDER BY a.message_count DESC
+                    LIMIT ?;
+                """, (chat_id, date_str, limit)) as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        results.append({
+                            "user_id": r[0],
+                            "message_count": r[1],
+                            "is_active_granted": bool(r[2]),
+                            "full_name": r[3] or "Foydalanuvchi",
+                            "username": r[4]
+                        })
+        except Exception as e:
+            logger.error(f"get_daily_activity_leaderboard xatosi: {e}")
+        return results
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""

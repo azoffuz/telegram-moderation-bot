@@ -112,12 +112,20 @@ class IsAdminFilter(Filter):
 
             try:
                 admins = await bot.get_chat_administrators(chat.id)
-                admin_set = {a.user.id for a in admins}
+                admin_set = set()
+                for a in admins:
+                    # Faqat haqiqiy boshqaruv huquqiga ega adminlarni olamiz:
+                    # Agar a'zoda faqat "Active" unvoni bo'lsa va xabarlarni o'chirish huquqi bo'lmasa, uni admin deb hisoblamaymiz!
+                    if getattr(a, "custom_title", "") == "Active" and not getattr(a, "can_delete_messages", False):
+                        continue
+                    admin_set.add(a.user.id)
                 _chat_admins_cache[chat.id] = (now, admin_set)
                 return user.id in admin_set
             except Exception:
                 try:
                     member = await bot.get_chat_member(chat.id, user.id)
+                    if getattr(member, "custom_title", "") == "Active" and not getattr(member, "can_delete_messages", False):
+                        return False
                     return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
                 except Exception:
                     return False
