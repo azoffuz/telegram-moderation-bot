@@ -48,6 +48,13 @@ async def apply_night_mode_permissions(bot: Bot, chat_id: int, enable: bool):
             use_independent_chat_permissions=True
         )
         await db.set_night_mode(chat_id, True)
+
+        # 3. Tungi rejim boshlanganda barcha a'zolardan Active teglarini tozalash
+        try:
+            from bot.services.active_tag import revoke_all_chat_tags
+            asyncio.create_task(revoke_all_chat_tags(bot, chat_id))
+        except Exception as e:
+            logger.error(f"Tungi rejimda teglarni tozalash xatosi: {e}")
     else:
         # 3. Kunduzgi rejimga qaytish:
         saved_perms = await db.get_daytime_permissions(chat_id)

@@ -234,10 +234,10 @@ async def cmd_warn(message: Message, bot: Bot):
 
     auto_delete(message, 15)
 
-# ==================== /unwarn ====================
-@router.message(Command("unwarn"), IsGroupFilter())
+# ==================== /unwarn & /delwarn ====================
+@router.message(Command("unwarn", "delwarn", "rmwarn"), IsGroupFilter())
 async def cmd_unwarn(message: Message, bot: Bot):
-    """Ogohlantirishni kamaytirish."""
+    """Ogohlantirishni kamaytirish (/unwarn @username yoki /delwarn @username)."""
     if not await IsAdminFilter()(message, bot):
         try:
             await message.delete()
@@ -247,9 +247,21 @@ async def cmd_unwarn(message: Message, bot: Bot):
 
     target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
     if not target_id:
-        msg = await message.reply("ℹ️ Ogohlantirishni bekor qilish uchun reply qiling yoki <code>/unwarn @username</code> deb yozing.", parse_mode="HTML")
+        msg = await message.reply("ℹ️ Ogohlantirishni bekor qilish uchun reply qiling yoki <code>/delwarn @username</code> deb yozing.", parse_mode="HTML")
         auto_delete(message, 10)
         auto_delete(msg, 10)
+        return
+
+    # Agar '/delwarn all' yoki '/unwarn all' deb yozilgan bo'lsa, barcha warnlarni tozalaydi
+    parts = message.text.split()
+    if len(parts) > 2 and parts[-1].lower() in ["all", "hamma", "barchasi"]:
+        await db.reset_warns(target_id, message.chat.id)
+        resp = await message.reply(
+            f"✅ <a href=\"tg://user?id={target_id}\">{target_name}</a> ning barcha ogohlantirishlari to'liq o'chirildi (0/{config.MAX_WARNS}).",
+            parse_mode="HTML"
+        )
+        auto_delete(message, 15)
+        auto_delete(resp, 15)
         return
 
     new_count = await db.remove_warn(target_id, message.chat.id)
@@ -257,6 +269,31 @@ async def cmd_unwarn(message: Message, bot: Bot):
     resp = await message.reply(
         f"✅ <a href=\"tg://user?id={target_id}\">{target_name}</a> dan bitta ogohlantirish olib tashlandi.\n"
         f"📊 Joriy ogohlantirishlar: <b>{new_count}/{max_warns}</b>",
+        parse_mode="HTML"
+    )
+    auto_delete(message, 15)
+    auto_delete(resp, 15)
+
+@router.message(Command("resetwarns", "clearwarns", "delwarns"), IsGroupFilter())
+async def cmd_reset_warns(message: Message, bot: Bot):
+    """Foydalanuvchining barcha ogohlantirishlarini birdaniga o'chirish."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
+    if not target_id:
+        msg = await message.reply("ℹ️ Reply qiling yoki <code>/resetwarns @username</code> deb yozing.", parse_mode="HTML")
+        auto_delete(message, 10)
+        auto_delete(msg, 10)
+        return
+
+    await db.reset_warns(target_id, message.chat.id)
+    resp = await message.reply(
+        f"✅ <a href=\"tg://user?id={target_id}\">{target_name}</a> ning barcha ogohlantirishlari to'liq o'chirildi.",
         parse_mode="HTML"
     )
     auto_delete(message, 15)
@@ -363,10 +400,10 @@ async def cmd_mute(message: Message, bot: Bot):
 
     auto_delete(message, 15)
 
-# ==================== /unmute ====================
-@router.message(Command("unmute"), IsGroupFilter())
+# ==================== /unmute & /delmute ====================
+@router.message(Command("unmute", "delmute", "rmmute"), IsGroupFilter())
 async def cmd_unmute(message: Message, bot: Bot):
-    """Mutedan chiqarish (/unmute @username yoki reply)."""
+    """Mutedan chiqarish (/unmute @username yoki /delmute @username yoki reply)."""
     if not await IsAdminFilter()(message, bot):
         try:
             await message.delete()
