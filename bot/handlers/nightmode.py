@@ -1,4 +1,5 @@
 import logging
+import html
 from datetime import datetime, timezone, timedelta
 from aiogram import Router, Bot
 from aiogram.filters import Command
@@ -220,14 +221,34 @@ async def cmd_nightmode(message: Message, bot: Bot):
     # 5. Qo'lda ON qilish
     if action == "on":
         try:
+            gmt_offset = await db.get_gmt_offset(message.chat.id)
+            from bot.services.active_tag import get_chat_today_date_str, get_tier_info
+            today_str = get_chat_today_date_str(gmt_offset)
+            leaders = await db.get_daily_activity_leaderboard(message.chat.id, today_str, limit=5)
+
             await apply_night_mode_permissions(bot, message.chat.id, enable=True)
 
-            notice_msg = await message.answer(
-                "🌙 <b>TUNGI REJIM YOQILDI!</b>\n\n"
+            notice_text = (
+                "🌙 <b>TUNGI REJIM YOQILDI!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
                 "Guruhda xabar yozish vaqtincha cheklandi (faqat adminlar yoza oladi).\n"
-                "Ertalabgacha xayrli tun!",
-                parse_mode="HTML"
             )
+            if leaders:
+                notice_text += "\n🏆 <b>BUGUNGI ENG FAOL A'ZOLAR:</b>\n━━━━━━━━━━━━━━━━━━\n"
+                medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+                for idx, item in enumerate(leaders):
+                    badge = medals[idx] if idx < len(medals) else f"#{idx+1}"
+                    u_name = html.escape(item["full_name"])
+                    u_link = f"<a href=\"tg://user?id={item['user_id']}\">{u_name}</a>"
+                    cnt = item["message_count"]
+                    tier_title, tier_emoji = get_tier_info(cnt)
+                    tag_status = f" {tier_emoji} <b>[{tier_title}]</b>" if tier_title else ""
+                    notice_text += f"{badge} {u_link} — <b>{cnt} ta</b> xabar{tag_status}\n"
+                notice_text += "\n👏 <i>Bugun faol bo'lgan barcha a'zolarga tashakkur!</i>\n"
+
+            notice_text += "\n😴 <i>Ertalabgacha barchaga xayrli tun!</i>"
+
+            notice_msg = await message.answer(notice_text, parse_mode="HTML")
             await log_night_mode(bot, user, enabled=True)
         except Exception as e:
             logger.error(f"Tungi rejimni yoqishda xatolik: {e}")

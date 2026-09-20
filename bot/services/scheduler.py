@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import html
 from typing import Optional, List
 from datetime import datetime, timedelta, date, timezone
 from aiogram import Bot
@@ -129,19 +130,44 @@ async def auto_nightmode_worker(bot: Bot):
             if in_night:
                 cycle_key = f"ON_{now.strftime('%Y-%m-%d')}_{start_h}"
                 if not is_currently_night and last_action != cycle_key:
+                    date_str = now.strftime('%Y-%m-%d')
+                    leaders = await db.get_daily_activity_leaderboard(target_chat, date_str, limit=5)
+
                     from bot.handlers.nightmode import apply_night_mode_permissions
                     await apply_night_mode_permissions(bot, target_chat, enable=True)
                     await db.set_chat_setting_str(target_chat, "last_auto_nightmode_action", cycle_key)
 
+                    from bot.services.active_tag import get_tier_info
+                    night_text = (
+                        f"🌙 <b>AVTOMATIK TUNGI REJIM YOQILDI!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"🕒 Rejali vaqt keldi (Soat <b>{start_h:02d}:00</b>).\n"
+                        f"Guruhda xabar yozish ertalab soat <b>{end_h:02d}:00</b> gacha vaqtincha cheklandi.\n"
+                    )
+
+                    if leaders:
+                        night_text += (
+                            f"\n🏆 <b>BUGUNGI ENG FAOL A'ZOLAR:</b>\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                        )
+                        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+                        for idx, item in enumerate(leaders):
+                            badge = medals[idx] if idx < len(medals) else f"#{idx+1}"
+                            u_name = html.escape(item["full_name"])
+                            u_link = f"<a href=\"tg://user?id={item['user_id']}\">{u_name}</a>"
+                            cnt = item["message_count"]
+                            tier_title, tier_emoji = get_tier_info(cnt)
+                            tag_status = f" {tier_emoji} <b>[{tier_title}]</b>" if tier_title else ""
+                            night_text += f"{badge} {u_link} — <b>{cnt} ta</b> xabar{tag_status}\n"
+
+                        night_text += f"\n👏 <i>Bugun faol bo'lgan barcha a'zolarga tashakkur!</i>\n"
+
+                    night_text += f"\n😴 <i>Ertalabgacha barchaga xayrli tun!</i>"
+
                     try:
                         await bot.send_message(
                             chat_id=target_chat,
-                            text=(
-                                f"🌙 <b>AVTOMATIK TUNGI REJIM YOQILDI!</b>\n\n"
-                                f"🕒 Rejali vaqt keldi (Soat <b>{start_h:02d}:00</b>).\n"
-                                f"Guruhda xabar yozish ertalab soat <b>{end_h:02d}:00</b> gacha vaqtincha cheklandi.\n\n"
-                                f"<i>Ertalabgacha barchaga xayrli tun!</i>"
-                            ),
+                            text=night_text,
                             parse_mode="HTML"
                         )
                     except Exception as e:
