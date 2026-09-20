@@ -148,20 +148,7 @@ async def process_user_activity_and_check_reward(bot: Bot, chat_id: int, user, g
             success, msg = await grant_active_tag(bot, chat_id, user.id, tier_title)
             if success:
                 await db.mark_active_granted(chat_id, user.id, date_str)
-                from bot.services.cleaner import auto_delete
                 from bot.services.logger import send_log
-
-                congrats_text = (
-                    f"{tier_emoji} <b>YANGI DARAJA (LEVEL UP)!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🎉 Tabriklaymiz, <a href=\"tg://user?id={user.id}\">{html.escape(user.full_name)}</a>!\n"
-                    f"Siz bugun <b>{count} ta</b> xabar yozib, <b>«{tier_title}»</b> darajasiga erishdingiz!"
-                )
-                try:
-                    sent = await bot.send_message(chat_id=chat_id, text=congrats_text, parse_mode="HTML")
-                    auto_delete(sent, delay=45)
-                except Exception as e:
-                    logger.debug(f"Tabrik xabarini yuborishda xatolik: {e}")
 
                 log_text = (
                     f"{tier_emoji} <b>FOYDALANUVCHI DARAJASI OSHDI (LEVEL UP)</b>\n"
