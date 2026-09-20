@@ -17,17 +17,34 @@ logger = logging.getLogger(__name__)
 
 # Foydalanuvchining oxirgi xabarlari keshi: {(chat_id, user_id): (timestamp, text_lower)}
 _recent_user_messages: Dict[Tuple[int, int], Tuple[float, str]] = {}
+# Qayta hisoblashning oldini olish uchun xabar ID lari keshi: {(chat_id, message_id): timestamp}
+_processed_message_ids: Dict[Tuple[int, int], float] = {}
 
 def is_valid_activity_message(message: Message) -> bool:
     """
     Xabar faollik hisobiga o'tishi mumkinligini tekshiradi:
-    1. Kamida 3 ta mustaqil so'zdan iborat bo'lishi (2 ta so'zdan oshishi sharti).
-    2. Kamida 8 ta belgidan iborat bo'lishi.
-    3. Buyruq bo'lmasligi ('/' bilan boshlanmasligi).
-    4. Bir xil harflar takroridan iborat bo'lmasligi (aaaa, qweqwe).
-    5. Bir xil xabarni qayta-qayta nusxalab yubormasligi (Anti-Duplicate).
-    6. Minimal 4 soniyalik tanaffus (Anti-Fast-Spam Cooldown).
+    1. Tahrirlangan (edit) xabarlar va botlar hisobga o'tmaydi.
+    2. Har bir message_id faqat 1 marta hisoblanadi (dublikat yo'q).
+    3. Kamida 3 ta mustaqil so'zdan iborat bo'lishi (2 ta so'zdan oshishi sharti).
+    4. Kamida 8 ta belgidan iborat bo'lishi.
+    5. Buyruq bo'lmasligi ('/' bilan boshlanmasligi).
+    6. Bir xil harflar takroridan iborat bo'lmasligi (aaaa, qweqwe).
+    7. Bir xil xabarni qayta-qayta nusxalab yubormasligi (Anti-Duplicate).
+    8. Minimal 4 soniyalik tanaffus (Anti-Fast-Spam Cooldown).
     """
+    # 0. Tahrirlangan (edit qilingan) xabarlar hech qachon yangi ball bermaydi
+    if getattr(message, "edit_date", None):
+        return False
+
+    # Botlar hisoblanmaydi
+    if getattr(message, "from_user", None) and message.from_user.is_bot:
+        return False
+
+    chat_id = message.chat.id if message.chat else 0
+    msg_id = message.message_id
+    if (chat_id, msg_id) in _processed_message_ids:
+        return False
+
     text = (message.text or message.caption or "").strip()
     if not text:
         return False
@@ -57,7 +74,6 @@ def is_valid_activity_message(message: Message) -> bool:
 
     # 5. Cooldown va Anti-Duplicate tekshiruvi
     now = time.time()
-    chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else 0
     if not user_id:
         return False
@@ -73,6 +89,15 @@ def is_valid_activity_message(message: Message) -> bool:
             return False
 
     _recent_user_messages[cache_key] = (now, text.lower())
+    _processed_message_ids[(chat_id, msg_id)] = now
+
+    # Keshni avtomatik tozalash (xotira to'lib ketmasligi uchun)
+    if len(_processed_message_ids) > 2000:
+        cutoff = now - 1800
+        expired = [k for k, v in _processed_message_ids.items() if v < cutoff]
+        for k in expired:
+            _processed_message_ids.pop(k, None)
+
     return True
 
 # Faollik darajalari (Tiers)

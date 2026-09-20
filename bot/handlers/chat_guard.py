@@ -444,7 +444,9 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # -------------------------------------------------------------
     # 9. KUNLIK FOALLIK VA «ACTIVE» UNVONI HISOBI
     # -------------------------------------------------------------
-    # Xabar barcha moderatsiya filtrlaridan muvaffaqiyatli o'tgach, faollik hisobiga yoziladi (0ms kechikish)
-    gmt_offset = int(settings.get("gmt_offset", 5))
-    from bot.services.active_tag import process_user_activity_and_check_reward
-    asyncio.create_task(process_user_activity_and_check_reward(bot, chat_id, user, message, gmt_offset))
+    # Faqat yangi (tahrirlanmagan) va toza xabarlar faollik tizimi yoqilgan bo'lsa hisoblanadi
+    if settings.get("active_tag_enabled", True) and not getattr(message, "edit_date", None):
+        gmt_offset = int(settings.get("gmt_offset", 5))
+        from bot.services.active_tag import process_user_activity_and_check_reward
+        asyncio.create_task(process_user_activity_and_check_reward(bot, chat_id, user, message, gmt_offset))
+

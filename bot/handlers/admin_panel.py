@@ -176,6 +176,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
                 )
             ],
             [
+                InlineKeyboardButton(
+                    text=f"🎖 Faollik & Active Tag: {status_icon(settings.get('active_tag_enabled', True))}",
+                    callback_data="toggle:active_tag_enabled"
+                )
+            ],
+            [
                 InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:main")
             ]
         ]

@@ -233,12 +233,45 @@ async def cmd_remove_active(message: Message, bot: Bot):
 
 @router.message(Command("active", "activestat", "top", "topactive"), IsGroupFilter())
 async def cmd_active_stats(message: Message, bot: Bot):
-    """Kunlik va oylik faollar reytingini ko'rish (Interaktiv tugmalar bilan)."""
+    """Kunlik va oylik faollar reytingini ko'rish yoki admin tomonidan yoqish/o'chirish."""
     chat_id = message.chat.id
     parts = message.text.split()
     gmt_offset = await db.get_gmt_offset(chat_id)
 
-    # Agar '/active month' yoki '/topmonth' yozilgan bo'lsa
+    # 1. Admin tomonidan tizimni yoqish / o'chirish tekshiruvi:
+    # Masalan: /active on, /active off, /active yoqish, /active ochirish
+    if len(parts) > 1 and parts[1].lower() in ["on", "enable", "yoq", "yoqish", "och", "off", "disable", "ochirish"]:
+        if not await IsAdminFilter()(message, bot):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
+
+        turn_on = parts[1].lower() in ["on", "enable", "yoq", "yoqish"]
+        await db.set_chat_setting_bool(chat_id, "active_tag_enabled", turn_on)
+        status_text = "yoqildi ✅" if turn_on else "o'chirildi ❌"
+        resp = await message.reply(
+            f"🎖 <b>Faollik va Darajalar (Active Tag) tizimi</b> guruhda <b>{status_text}</b>!",
+            parse_mode="HTML"
+        )
+        auto_delete(message, delay=10)
+        auto_delete(resp, delay=15)
+        return
+
+    # 2. Agar tizim o'chiq bo'lsa va admin bo'lmasa, ma'lumot beramiz
+    settings = await db.get_all_chat_settings(chat_id)
+    if not settings.get("active_tag_enabled", True):
+        resp = await message.reply(
+            "ℹ️ <i>Guruhda faollik va Active tegi tizimi admin tomonidan vaqtincha o'chirilgan.</i>\n\n"
+            "💡 <i>Uni qayta yoqish uchun:</i> <code>/active on</code>",
+            parse_mode="HTML"
+        )
+        auto_delete(message, delay=10)
+        auto_delete(resp, delay=20)
+        return
+
+    # 3. Agar '/active month' yoki '/topmonth' yozilgan bo'lsa
     if (len(parts) > 1 and parts[1].lower() in ["month", "oy", "oylik"]) or "month" in parts[0].lower():
         month_str = get_chat_current_month_str(gmt_offset)
         text = await format_monthly_leaderboard(chat_id, month_str)
