@@ -234,10 +234,106 @@ async def cmd_warn(message: Message, bot: Bot):
 
     auto_delete(message, 15)
 
-# ==================== /unwarn & /delwarn ====================
-@router.message(Command("unwarn", "delwarn", "rmwarn"), IsGroupFilter())
+# ==================== /delwarn (Xabarni o'chirish + Warn) ====================
+@router.message(Command("delwarn", "dwarn"), IsGroupFilter())
+async def cmd_delwarn(message: Message, bot: Bot):
+    """Reply qilingan qoidabuzar xabarni o'chiradi va foydalanuvchiga warn beradi."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        msg = await message.reply(
+            "ℹ️ <b>Xabarni o'chirib warn berish uchun:</b>\n"
+            "Foydalanuvchi xabariga reply qilib <code>/delwarn [sabab]</code> deb yozing.",
+            parse_mode="HTML"
+        )
+        auto_delete(message, 10)
+        auto_delete(msg, 10)
+        return
+
+    target = message.reply_to_message.from_user
+    target_id = target.id
+    target_name = target.full_name
+    target_username = target.username
+
+    if target_id == bot.id or target_id in config.ADMIN_IDS:
+        msg = await message.reply("❌ Bot yoki adminlarga jazo qo'llab bo'lmaydi!")
+        auto_delete(message, 5)
+        auto_delete(msg, 5)
+        return
+
+    # 1. Reply qilingan xabarni darhol o'chiramiz
+    try:
+        await message.reply_to_message.delete()
+    except Exception as e:
+        logger.debug(f"delwarn xabarni o'chirishda xatolik: {e}")
+
+    # 2. Sababni olamiz
+    parts = message.text.split()[1:]
+    reason = " ".join(parts).strip() or "Qoidabuzarlik (xabari o'chirildi)"
+
+    new_count = await db.add_warn(target_id, message.chat.id, reason)
+    target_dummy = User(id=target_id, is_bot=False, first_name=target_name, username=target_username)
+    max_warns = await db.get_chat_setting_int(message.chat.id, "max_warns", default=config.MAX_WARNS)
+
+    if new_count >= max_warns:
+        await db.reset_warns(target_id, message.chat.id)
+        until = datetime.now() + timedelta(hours=24)
+        try:
+            await bot.restrict_chat_member(
+                chat_id=message.chat.id,
+                user_id=target_id,
+                permissions=ChatPermissions(can_send_messages=False),
+                until_date=until
+            )
+            resp = await message.reply(
+                f"🗑 <b>Qoidabuzar xabari o'chirildi!</b>\n"
+                f"🚫 <a href=\"tg://user?id={target_id}\">{target_name}</a> <b>{max_warns} ta</b> "
+                f"ogohlantirish oldi va <b>24 soatga mute</b> qilindi!\n"
+                f"📌 <b>So'nggi sabab:</b> {reason}",
+                parse_mode="HTML"
+            )
+            auto_delete(resp, 20)
+
+            await log_moderation(
+                bot=bot,
+                admin=message.from_user,
+                target_user=target_dummy,
+                action=f"Delwarn -> Mute ({max_warns} warn)",
+                reason=reason,
+                details="Xabar o'chirildi + 24 soatga cheklandi"
+            )
+        except Exception as e:
+            logger.error(f"Delwarn mute limit xatosi: {e}")
+    else:
+        resp = await message.reply(
+            f"🗑 <b>Qoidabuzar xabari o'chirildi!</b>\n"
+            f"⚠️ <a href=\"tg://user?id={target_id}\">{target_name}</a> ogohlantirildi! "
+            f"(<b>{new_count}/{max_warns}</b>)\n"
+            f"📌 <b>Sabab:</b> {reason}",
+            parse_mode="HTML"
+        )
+        auto_delete(resp, 20)
+
+        await log_moderation(
+            bot=bot,
+            admin=message.from_user,
+            target_user=target_dummy,
+            action=f"Delwarn ({new_count}/{max_warns})",
+            reason=reason,
+            details="Xabari o'chirildi"
+        )
+
+    auto_delete(message, 15)
+
+# ==================== /unwarn ====================
+@router.message(Command("unwarn", "rmwarn"), IsGroupFilter())
 async def cmd_unwarn(message: Message, bot: Bot):
-    """Ogohlantirishni kamaytirish (/unwarn @username yoki /delwarn @username)."""
+    """Ogohlantirishni kamaytirish (/unwarn @username yoki reply)."""
     if not await IsAdminFilter()(message, bot):
         try:
             await message.delete()
@@ -247,12 +343,12 @@ async def cmd_unwarn(message: Message, bot: Bot):
 
     target_id, target_name, _, _, _, _ = await parse_target_and_arguments(message, bot)
     if not target_id:
-        msg = await message.reply("ℹ️ Ogohlantirishni bekor qilish uchun reply qiling yoki <code>/delwarn @username</code> deb yozing.", parse_mode="HTML")
+        msg = await message.reply("ℹ️ Ogohlantirishni bekor qilish uchun reply qiling yoki <code>/unwarn @username</code> deb yozing.", parse_mode="HTML")
         auto_delete(message, 10)
         auto_delete(msg, 10)
         return
 
-    # Agar '/delwarn all' yoki '/unwarn all' deb yozilgan bo'lsa, barcha warnlarni tozalaydi
+    # Agar '/unwarn all' deb yozilgan bo'lsa
     parts = message.text.split()
     if len(parts) > 2 and parts[-1].lower() in ["all", "hamma", "barchasi"]:
         await db.reset_warns(target_id, message.chat.id)
@@ -400,10 +496,101 @@ async def cmd_mute(message: Message, bot: Bot):
 
     auto_delete(message, 15)
 
-# ==================== /unmute & /delmute ====================
-@router.message(Command("unmute", "delmute", "rmmute"), IsGroupFilter())
+# ==================== /delmute (Xabarni o'chirish + Mute) ====================
+@router.message(Command("delmute", "dmute"), IsGroupFilter())
+async def cmd_delmute(message: Message, bot: Bot):
+    """Reply qilingan qoidabuzar xabarni o'chiradi va foydalanuvchini mute qiladi."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        msg = await message.reply(
+            "ℹ️ <b>Xabarni o'chirib mute qilish uchun:</b>\n"
+            "Foydalanuvchi xabariga reply qilib <code>/delmute 10h [sabab]</code> deb yozing.",
+            parse_mode="HTML"
+        )
+        auto_delete(message, 10)
+        auto_delete(msg, 10)
+        return
+
+    target = message.reply_to_message.from_user
+    target_id = target.id
+    target_name = target.full_name
+    target_username = target.username
+
+    if target_id == bot.id or target_id in config.ADMIN_IDS:
+        msg = await message.reply("❌ Bot yoki adminlarga jazo qo'llab bo'lmaydi!")
+        auto_delete(message, 5)
+        auto_delete(msg, 5)
+        return
+
+    # 1. Reply qilingan xabarni darhol o'chiramiz
+    try:
+        await message.reply_to_message.delete()
+    except Exception as e:
+        logger.debug(f"delmute xabarni o'chirishda xatolik: {e}")
+
+    # 2. Muddat va sababni aniqlash
+    parts = message.text.split()[1:]
+    time_str = "1d"  # Sukut bo'yicha 24 soat
+    reason_tokens = []
+
+    if parts:
+        if is_time_string(parts[0]):
+            time_str = parts[0]
+            reason_tokens = parts[1:]
+        else:
+            reason_tokens = parts
+
+    delta, duration_str = parse_time_duration(time_str)
+    reason = " ".join(reason_tokens).strip() or "Qoidabuzarlik (xabari o'chirildi)"
+    until = datetime.now() + delta
+
+    try:
+        await bot.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=target_id,
+            permissions=ChatPermissions(
+                can_send_messages=False,
+                can_send_media_messages=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False
+            ),
+            until_date=until
+        )
+
+        resp = await message.reply(
+            f"🗑 <b>Qoidabuzar xabari o'chirildi!</b>\n"
+            f"🔇 <a href=\"tg://user?id={target_id}\">{target_name}</a> <b>{duration_str}</b> muddatga mute qilindi.\n"
+            f"📌 <b>Sabab:</b> {reason}",
+            parse_mode="HTML"
+        )
+        auto_delete(resp, 20)
+
+        target_dummy = User(id=target_id, is_bot=False, first_name=target_name, username=target_username)
+        await log_moderation(
+            bot=bot,
+            admin=message.from_user,
+            target_user=target_dummy,
+            action="Delmute",
+            reason=reason,
+            details=f"Xabar o'chirildi | Muddat: {duration_str}"
+        )
+    except Exception as e:
+        logger.error(f"Delmute qilishda xatolik: {e}")
+        err_msg = await message.reply(f"❌ Mute qilishda xatolik yuz berdi: {e}")
+        auto_delete(err_msg, 10)
+
+    auto_delete(message, 15)
+
+# ==================== /unmute ====================
+@router.message(Command("unmute", "rmmute"), IsGroupFilter())
 async def cmd_unmute(message: Message, bot: Bot):
-    """Mutedan chiqarish (/unmute @username yoki /delmute @username yoki reply)."""
+    """Mutedan chiqarish (/unmute @username yoki reply)."""
     if not await IsAdminFilter()(message, bot):
         try:
             await message.delete()
@@ -446,6 +633,72 @@ async def cmd_unmute(message: Message, bot: Bot):
         )
     except Exception as e:
         logger.error(f"Unmute qilishda xatolik: {e}")
+
+    auto_delete(message, 15)
+
+# ==================== /delban (Xabarni o'chirish + Ban) ====================
+@router.message(Command("delban", "dban"), IsGroupFilter())
+async def cmd_delban(message: Message, bot: Bot):
+    """Reply qilingan qoidabuzar xabarni o'chiradi va foydalanuvchini ban qiladi."""
+    if not await IsAdminFilter()(message, bot):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.from_user:
+        msg = await message.reply(
+            "ℹ️ <b>Xabarni o'chirib ban qilish uchun:</b>\n"
+            "Foydalanuvchi xabariga reply qilib <code>/delban [sabab]</code> deb yozing.",
+            parse_mode="HTML"
+        )
+        auto_delete(message, 10)
+        auto_delete(msg, 10)
+        return
+
+    target = message.reply_to_message.from_user
+    target_id = target.id
+    target_name = target.full_name
+    target_username = target.username
+
+    if target_id == bot.id or target_id in config.ADMIN_IDS:
+        msg = await message.reply("❌ Bot yoki adminlarga jazo qo'llab bo'lmaydi!")
+        auto_delete(message, 5)
+        auto_delete(msg, 5)
+        return
+
+    try:
+        await message.reply_to_message.delete()
+    except Exception as e:
+        logger.debug(f"delban xabarni o'chirishda xatolik: {e}")
+
+    parts = message.text.split()[1:]
+    reason = " ".join(parts).strip() or "Qoidabuzarlik (xabari o'chirildi)"
+
+    try:
+        await bot.ban_chat_member(chat_id=message.chat.id, user_id=target_id)
+        resp = await message.reply(
+            f"🗑 <b>Qoidabuzar xabari o'chirildi!</b>\n"
+            f"⛔️ <a href=\"tg://user?id={target_id}\">{target_name}</a> guruhdan chetlatildi (ban)!\n"
+            f"📌 <b>Sabab:</b> {reason}",
+            parse_mode="HTML"
+        )
+        auto_delete(resp, 20)
+
+        target_dummy = User(id=target_id, is_bot=False, first_name=target_name, username=target_username)
+        await log_moderation(
+            bot=bot,
+            admin=message.from_user,
+            target_user=target_dummy,
+            action="Delban",
+            reason=reason,
+            details="Xabar o'chirildi + Ban"
+        )
+    except Exception as e:
+        logger.error(f"Delban qilishda xatolik: {e}")
+        err_msg = await message.reply(f"❌ Ban qilishda xatolik yuz berdi: {e}")
+        auto_delete(err_msg, 10)
 
     auto_delete(message, 15)
 
