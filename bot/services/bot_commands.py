@@ -36,6 +36,8 @@ ADMIN_GROUP_COMMANDS: List[BotCommand] = [
     BotCommand(command="threads", description="Log mavzulari (topics) holati"),
     BotCommand(command="report", description="Adminga qoidabuzar ustidan shikoyat"),
     BotCommand(command="time", description="Guruhning real vaqti va GMT holati"),
+    BotCommand(command="antilink", description="Anti-Link himoyasini sozlash"),
+    BotCommand(command="antimention", description="Mention/kanal nazoratini sozlash"),
     BotCommand(command="sync_commands", description="Buyruqlar menyusini yangilash"),
 ]
 

@@ -162,17 +162,22 @@ async def validate_mention(bot: Bot, chat_id: int, mention_str: str) -> Tuple[bo
     _mention_cache[cache_key] = (now, res)
     return res
 
-async def detect_link_or_illegal_mention(message: Message, bot: Bot) -> Optional[str]:
+async def detect_link_or_illegal_mention(message: Message, bot: Bot, check_mentions: bool = True) -> Optional[str]:
     """
     Xabardagi havolalar va ruxsat etilmagan mention larni tekshiradi:
     - Ochiq yoki yashirin URL bo'lsa -> return link
-    - Guruhda mavjud bo'lmagan begona user yoki kanal mention bo'lsa -> return mention
+    - check_mentions True bo'lsa: Guruhda mavjud bo'lmagan begona user yoki kanal mention bo'lsa -> return mention
     - Agar faqat guruhdagi mavjud a'zolar ping qilingan bo'lsa -> return None (ruxsat beriladi)
+    - check_mentions False bo'lsa: mention lar tekshirilmaydi, faqat URL lar tekshiriladi
     """
     # 1. Aniq URL / Domen havolalarini tekshirish
     explicit_link = detect_explicit_link(message)
     if explicit_link:
         return explicit_link
+
+    # Agar mention larni tekshirish o'chirilgan bo'lsa, URL topilmagani uchun ruxsat beramiz
+    if not check_mentions:
+        return None
 
     # 2. Mention larni yig'ish
     text = message.text or message.caption or ""
@@ -464,7 +469,8 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     # 4. 100% ANTI-LINK VA BEGONA MENTION / KANAL REKLAMA NAZORATI
     # -------------------------------------------------------------
     if settings.get("anti_link", True):
-        detected_link = await detect_link_or_illegal_mention(message, bot)
+        check_mentions = settings.get("anti_mention", True)
+        detected_link = await detect_link_or_illegal_mention(message, bot, check_mentions=check_mentions)
         if detected_link:
             try:
                 await message.delete()

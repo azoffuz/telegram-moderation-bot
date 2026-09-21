@@ -104,6 +104,7 @@ class Database:
                         chat_id BIGINT PRIMARY KEY,
                         night_mode BOOLEAN DEFAULT FALSE,
                         anti_link BOOLEAN DEFAULT TRUE,
+                        anti_mention BOOLEAN DEFAULT TRUE,
                         anti_forward BOOLEAN DEFAULT TRUE,
                         anti_flood BOOLEAN DEFAULT TRUE,
                         captcha_enabled BOOLEAN DEFAULT TRUE,
@@ -195,6 +196,7 @@ class Database:
                     chat_id INTEGER PRIMARY KEY,
                     night_mode BOOLEAN DEFAULT 0,
                     anti_link BOOLEAN DEFAULT 1,
+                    anti_mention BOOLEAN DEFAULT 1,
                     anti_forward BOOLEAN DEFAULT 1,
                     anti_flood BOOLEAN DEFAULT 1,
                     captcha_enabled BOOLEAN DEFAULT 1,
@@ -282,6 +284,7 @@ class Database:
             ("last_auto_nightmode_action", "TEXT DEFAULT NULL", "TEXT DEFAULT NULL"),
             ("active_tag_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
             ("active_tag_threshold", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
+            ("anti_mention", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -500,6 +503,7 @@ class Database:
         "anti_location": False,
         "auto_slowmode": False,
         "active_tag_enabled": True,
+        "anti_mention": True,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:

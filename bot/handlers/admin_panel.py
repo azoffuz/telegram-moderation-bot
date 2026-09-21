@@ -111,6 +111,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"🏷 Begona Mention Nazorati: {status_icon(settings.get('anti_mention', True))}",
+                    callback_data="toggle:anti_mention"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🔀 Anti-Forward: {status_icon(settings.get('anti_forward', True))}",
                     callback_data="toggle:anti_forward"
                 )
@@ -1504,4 +1510,80 @@ async def cmd_sync_commands(message: Message, bot: Bot):
         )
     else:
         await status_msg.edit_text("❌ Buyruqlarni o'rnatishda xatolik yuz berdi. Bot loglarini tekshiring.")
+
+@router.message(Command("antilink"))
+async def cmd_toggle_antilink(message: Message, bot: Bot):
+    """Adminlar uchun Anti-Link funksiyasini yoqish/o'chirish yoki holatini ko'rish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type in ["group", "supergroup"]:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+        return
+
+    chat_id = message.chat.id if message.chat.type in ["group", "supergroup"] else get_group_target_id()
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1].lower() in ["on", "yoq", "yoqish", "enable", "1"]:
+        await db.set_chat_setting_bool(chat_id, "anti_link", True)
+        msg = await message.reply("✅ <b>Anti-Link himoyasi YOQILDI!</b>\n\nEndi guruhda havolalar taqiqlanadi.", parse_mode="HTML")
+    elif len(parts) > 1 and parts[1].lower() in ["off", "och", "ochirish", "disable", "0"]:
+        await db.set_chat_setting_bool(chat_id, "anti_link", False)
+        msg = await message.reply("❌ <b>Anti-Link himoyasi O'CHIRILDI!</b>\n\nGuruhda havolalar yuborishga ruxsat berildi.", parse_mode="HTML")
+    else:
+        current = await db.get_chat_setting_bool(chat_id, "anti_link", True)
+        status_txt = "YOQILGAN ✅" if current else "O'CHIRILGAN ❌"
+        msg = await message.reply(
+            f"🔗 <b>Anti-Link holati:</b> <code>{status_txt}</code>\n\n"
+            f"💡 <i>O'zgartirish uchun:</i>\n"
+            f"• <code>/antilink on</code> — Yoqish\n"
+            f"• <code>/antilink off</code> — O'chirish",
+            parse_mode="HTML"
+        )
+    if message.chat.type in ["group", "supergroup"]:
+        auto_delete(message, delay=10)
+        auto_delete(msg, delay=20)
+
+@router.message(Command("antimention", "mentionguard"))
+async def cmd_toggle_antimention(message: Message, bot: Bot):
+    """Adminlar uchun Begona Mention/Kanal nazoratini yoqish/o'chirish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type in ["group", "supergroup"]:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+        return
+
+    chat_id = message.chat.id if message.chat.type in ["group", "supergroup"] else get_group_target_id()
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1].lower() in ["on", "yoq", "yoqish", "enable", "1"]:
+        await db.set_chat_setting_bool(chat_id, "anti_mention", True)
+        msg = await message.reply(
+            "✅ <b>Begona Mention va Kanal nazorati YOQILDI!</b>\n\n"
+            "• Guruh a'zolari bir-birini ping qilishi: <i>Ruxsat</i>\n"
+            "• Kanallar va guruhda yo'q begona shaxslar: <i>Taqiqlanadi</i>",
+            parse_mode="HTML"
+        )
+    elif len(parts) > 1 and parts[1].lower() in ["off", "och", "ochirish", "disable", "0"]:
+        await db.set_chat_setting_bool(chat_id, "anti_mention", False)
+        msg = await message.reply(
+            "❌ <b>Begona Mention va Kanal nazorati O'CHIRILDI!</b>\n\n"
+            "Endi @username yozilganda bot tomonidan o'chirilmaydi.",
+            parse_mode="HTML"
+        )
+    else:
+        current = await db.get_chat_setting_bool(chat_id, "anti_mention", True)
+        status_txt = "YOQILGAN ✅" if current else "O'CHIRILGAN ❌"
+        msg = await message.reply(
+            f"🏷 <b>Begona Mention nazorati:</b> <code>{status_txt}</code>\n\n"
+            f"💡 <i>O'zgartirish uchun:</i>\n"
+            f"• <code>/antimention on</code> — Yoqish\n"
+            f"• <code>/antimention off</code> — O'chirish",
+            parse_mode="HTML"
+        )
+    if message.chat.type in ["group", "supergroup"]:
+        auto_delete(message, delay=10)
+        auto_delete(msg, delay=20)
+
 
