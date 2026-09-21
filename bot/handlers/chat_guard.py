@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, List
 
 from aiogram import Router, Bot
-from aiogram.types import Message, ChatPermissions
+from aiogram.types import Message, ChatPermissions, User
 from aiogram.enums import MessageEntityType
 
 from bot.config import config
@@ -39,9 +39,24 @@ FLOOD_RATE_LIMIT = 5
 FLOOD_TIME_WINDOW = 4.0
 MUTE_DURATION_MINUTES = 10
 
+# Mentions keshini saqlash: (chat_id, username_lower) -> (timestamp, (is_allowed, reason))
+_mention_cache: Dict[Tuple[int, str], Tuple[float, Tuple[bool, str]]] = {}
+_bot_username: Optional[str] = None
+
+async def get_bot_username(bot: Bot) -> str:
+    """Botning o'z username ini keshlaydi."""
+    global _bot_username
+    if _bot_username is None:
+        try:
+            me = await bot.get_me()
+            _bot_username = (me.username or "").lower()
+        except Exception:
+            _bot_username = ""
+    return _bot_username
+
 # ==================== YORDAMCHI FUNKSIYALAR ====================
-def detect_link(message: Message) -> Optional[str]:
-    """Xabardagi barcha turdagi havolalarni (ochiq, yashirin, mention) aniqlaydi."""
+def detect_explicit_link(message: Message) -> Optional[str]:
+    """Xabardagi barcha ochiq va yashirin URL havolalarini aniqlaydi (mention lardan tashqari)."""
     text = message.text or message.caption or ""
     entities = (message.entities or []) + (message.caption_entities or [])
 
@@ -50,16 +65,147 @@ def detect_link(message: Message) -> Optional[str]:
             return text[entity.offset : entity.offset + entity.length]
         elif entity.type == MessageEntityType.TEXT_LINK:
             return entity.url or "Yashirin havola (text_link)"
-        elif entity.type == MessageEntityType.MENTION:
-            return text[entity.offset : entity.offset + entity.length]
 
     match = URL_REGEX.search(text)
     if match:
         return match.group(0)
 
-    mention_match = MENTION_REGEX.search(text)
-    if mention_match:
-        return mention_match.group(0)
+    return None
+
+async def validate_mention(bot: Bot, chat_id: int, mention_str: str) -> Tuple[bool, str]:
+    """
+    @username mention ni tekshiradi:
+    - Botning o'zi yoki oq ro'yxatdagi kanal bo'lsa -> Ruxsat beriladi (True)
+    - Guruhda a'zo bo'lgan foydalanuvchi bo'lsa -> Ruxsat beriladi (True)
+    - Kanal, tashqi guruh yoki guruhda yo'q shaxs bo'lsa -> Taqiqlanadi (False)
+    """
+    now = time.time()
+    uname = mention_str.lstrip("@").strip().lower()
+    if not uname:
+        return True, "empty"
+
+    # 1. Botning o'zini ping qilishgan bo'lsa
+    bot_uname = await get_bot_username(bot)
+    if bot_uname and uname == bot_uname:
+        return True, "bot"
+
+    # 2. Oq ro'yxatdagi rasmiy kanal/manbalar
+    if uname in ["reker_uz", "rekeruz"]:
+        return True, "whitelist"
+
+    # 3. Keshni tekshirish (5 daqiqalik kesh)
+    cache_key = (chat_id, uname)
+    if cache_key in _mention_cache:
+        cached_time, cached_result = _mention_cache[cache_key]
+        if now - cached_time < 300:
+            return cached_result
+
+    # Kesh hajmini nazorat qilish
+    if len(_mention_cache) > 1500:
+        expired = [k for k, v in _mention_cache.items() if now - v[0] >= 300]
+        for k in expired:
+            _mention_cache.pop(k, None)
+
+    # 4. Avvalo bazadagi 'known_users' jadvalidan qidiramiz
+    user_data = await db.get_user_by_username(uname)
+    if user_data:
+        target_uid = user_data["user_id"]
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=target_uid)
+            if member.status in ["creator", "administrator", "member", "restricted"]:
+                res = (True, "member")
+                _mention_cache[cache_key] = (now, res)
+                return res
+            else:
+                res = (False, f"Guruhdan chiqqan a'zo (@{uname})")
+                _mention_cache[cache_key] = (now, res)
+                return res
+        except Exception:
+            res = (False, f"Guruhda mavjud emas (@{uname})")
+            _mention_cache[cache_key] = (now, res)
+            return res
+
+    # 5. Agar bazada bo'lmasa, Telegram Bot API orqali obyekt turini aniqlaymiz
+    try:
+        target_chat = await bot.get_chat(f"@{uname}")
+    except Exception:
+        # Telegram chatni topa olmadi (noma'lum yoki begona foydalanuvchi)
+        res = (False, f"Guruhda yo'q / noma'lum (@{uname})")
+        _mention_cache[cache_key] = (now, res)
+        return res
+
+    # Kanal yoki guruh bo'lsa darhol taqiqlaymiz (kanallarniku albatta!)
+    if target_chat.type in ["channel", "supergroup", "group"]:
+        res = (False, f"Kanal yoki guruh havolasi (@{uname})")
+        _mention_cache[cache_key] = (now, res)
+        return res
+
+    # Agar private chat (foydalanuvchi) bo'lsa, uni bazaga saqlaymiz va a'zoligini tekshiramiz
+    if target_chat.type == "private":
+        await db.save_known_user(target_chat.id, target_chat.username, target_chat.full_name)
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=target_chat.id)
+            if member.status in ["creator", "administrator", "member", "restricted"]:
+                res = (True, "member")
+                _mention_cache[cache_key] = (now, res)
+                return res
+            else:
+                res = (False, f"Guruhda yo'q foydalanuvchi (@{uname})")
+                _mention_cache[cache_key] = (now, res)
+                return res
+        except Exception:
+            res = (False, f"Guruh a'zosi emas (@{uname})")
+            _mention_cache[cache_key] = (now, res)
+            return res
+
+    res = (False, f"Noma'lum havola (@{uname})")
+    _mention_cache[cache_key] = (now, res)
+    return res
+
+async def detect_link_or_illegal_mention(message: Message, bot: Bot) -> Optional[str]:
+    """
+    Xabardagi havolalar va ruxsat etilmagan mention larni tekshiradi:
+    - Ochiq yoki yashirin URL bo'lsa -> return link
+    - Guruhda mavjud bo'lmagan begona user yoki kanal mention bo'lsa -> return mention
+    - Agar faqat guruhdagi mavjud a'zolar ping qilingan bo'lsa -> return None (ruxsat beriladi)
+    """
+    # 1. Aniq URL / Domen havolalarini tekshirish
+    explicit_link = detect_explicit_link(message)
+    if explicit_link:
+        return explicit_link
+
+    # 2. Mention larni yig'ish
+    text = message.text or message.caption or ""
+    entities = (message.entities or []) + (message.caption_entities or [])
+    mentions_to_check: List[str] = []
+
+    for entity in entities:
+        if entity.type == MessageEntityType.MENTION:
+            m_text = text[entity.offset : entity.offset + entity.length]
+            mentions_to_check.append(m_text)
+        elif entity.type == MessageEntityType.TEXT_MENTION and entity.user:
+            # Username siz nom orqali ping qilingan a'zo
+            try:
+                member = await bot.get_chat_member(chat_id=message.chat.id, user_id=entity.user.id)
+                if member.status not in ["creator", "administrator", "member", "restricted"]:
+                    return f"{entity.user.full_name} (Guruhda yo'q a'zo)"
+            except Exception:
+                return f"{entity.user.full_name} (Guruh a'zosi emas)"
+
+    # Regex orqali ham matndagi @username larni tekshirish
+    for m in MENTION_REGEX.finditer(text):
+        mentions_to_check.append(m.group(0))
+
+    if not mentions_to_check:
+        return None
+
+    # Takrorlanishlarni olib tashlaymiz
+    unique_mentions = list(dict.fromkeys(mentions_to_check))
+
+    for m_str in unique_mentions:
+        is_allowed, reason = await validate_mention(bot, message.chat.id, m_str)
+        if not is_allowed:
+            return f"{m_str} ({reason})"
 
     return None
 
@@ -315,10 +461,10 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             return
 
     # -------------------------------------------------------------
-    # 4. 100% ANTI-LINK
+    # 4. 100% ANTI-LINK VA BEGONA MENTION / KANAL REKLAMA NAZORATI
     # -------------------------------------------------------------
     if settings.get("anti_link", True):
-        detected_link = detect_link(message)
+        detected_link = await detect_link_or_illegal_mention(message, bot)
         if detected_link:
             try:
                 await message.delete()
@@ -326,7 +472,7 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
                 pass
             asyncio.create_task(db.increment_stat("links_deleted"))
             warn_msg = await message.answer(
-                f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda havola (link) yoki reklama yuborish taqiqlangan!",
+                f"⚠️ <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda havola (link), kanal yoki begona a'zolarni reklama qilish taqiqlangan!",
                 parse_mode="HTML"
             )
             auto_delete(warn_msg, delay=10)
