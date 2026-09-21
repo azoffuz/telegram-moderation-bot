@@ -1479,3 +1479,29 @@ async def cmd_daily_report(message: Message):
     from bot.services.scheduler import generate_daily_report_text
     report_text = await generate_daily_report_text()
     await message.reply(report_text, parse_mode="HTML")
+
+@router.message(Command("sync_commands", "setbotcommands"))
+async def cmd_sync_commands(message: Message, bot: Bot):
+    """Adminlar uchun bot buyruqlarini Telegram API orqali qayta sinxronizatsiya qilish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type in ["group", "supergroup"]:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+        return
+
+    from bot.services.bot_commands import setup_bot_commands
+    status_msg = await message.reply("⏳ Buyruqlar Telegram serverlari bilan sinxronizatsiya qilinmoqda...")
+    success = await setup_bot_commands(bot)
+    if success:
+        await status_msg.edit_text(
+            "✅ <b>Telegram buyruqlari muvaffaqiyatli o'rnatildi!</b>\n\n"
+            "• Adminlar menyusi: <i>To'liq moderatsiya va boshqaruv</i>\n"
+            "• A'zolar menyusi: <i>/active, /selfstats, /report, /time</i>\n"
+            "• BotFather ga kirish shart emas.",
+            parse_mode="HTML"
+        )
+    else:
+        await status_msg.edit_text("❌ Buyruqlarni o'rnatishda xatolik yuz berdi. Bot loglarini tekshiring.")
+

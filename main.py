@@ -23,6 +23,10 @@ async def on_startup(bot: Bot):
     bot_info = await bot.get_me()
     logger.info(f"🤖 Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.full_name})")
 
+    # Telegram bot buyruqlarini (Command Menu) o'rnatish
+    from bot.services.bot_commands import setup_bot_commands
+    await setup_bot_commands(bot)
+
     # Log kanalga xabar yuborish
     startup_text = (
         f"🟢 <b>BOT ISHGA TUSHDI</b>\n"
