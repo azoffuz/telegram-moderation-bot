@@ -258,7 +258,7 @@ async def cmd_active_stats(message: Message, bot: Bot):
             parse_mode="HTML"
         )
         auto_delete(message, delay=10)
-        auto_delete(resp, delay=15)
+        auto_delete(resp, delay=10)
         return
 
     # 2. Agar tizim o'chiq bo'lsa va admin bo'lmasa, ma'lumot beramiz
@@ -270,7 +270,7 @@ async def cmd_active_stats(message: Message, bot: Bot):
             parse_mode="HTML"
         )
         auto_delete(message, delay=10)
-        auto_delete(resp, delay=20)
+        auto_delete(resp, delay=10)
         return
 
     # 3. Agar '/active month' yoki '/topmonth' yozilgan bo'lsa
@@ -284,8 +284,8 @@ async def cmd_active_stats(message: Message, bot: Bot):
         kb = build_leaderboard_keyboard("daily")
 
     sent = await message.reply(text, reply_markup=kb, parse_mode="HTML")
-    auto_delete(message, delay=20)
-    auto_delete(sent, delay=90)
+    auto_delete(message, delay=10)
+    auto_delete(sent, delay=10)
 
 @router.callback_query(F.data.startswith("act_board:"), IsGroupFilter())
 async def callback_toggle_leaderboard(call: CallbackQuery, bot: Bot):
