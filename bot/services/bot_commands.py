@@ -38,6 +38,10 @@ ADMIN_GROUP_COMMANDS: List[BotCommand] = [
     BotCommand(command="time", description="Guruhning real vaqti va GMT holati"),
     BotCommand(command="antilink", description="Anti-Link himoyasini sozlash"),
     BotCommand(command="antimention", description="Mention/kanal nazoratini sozlash"),
+    BotCommand(command="stickers", description="Stikerlar yuborishni sozlash (on/off)"),
+    BotCommand(command="gifs", description="GIFlar yuborishni sozlash (on/off)"),
+    BotCommand(command="stickerwhitelist", description="Stikerlar oq ro'yxati (whitelist)"),
+    BotCommand(command="gifwhitelist", description="GIFlar oq ro'yxati (whitelist)"),
     BotCommand(command="sync_commands", description="Buyruqlar menyusini yangilash"),
 ]
 

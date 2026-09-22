@@ -339,13 +339,48 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
     await db.save_known_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     await db.track_chat_member(message.chat.id, message.from_user.id)
 
-    # Adminlarga barcha himoyalardan o'tishga ruxsat beriladi
-    if await IsAdminFilter()(message, bot):
-        return
-
     chat_id = message.chat.id
     user = message.from_user
     text = message.text or message.caption or ""
+
+    # Guruh sozlamalarini xotiradan (RAM - 0ms) olamiz
+    settings = await db.get_all_chat_settings(chat_id)
+
+    # -------------------------------------------------------------
+    # 0. STIKER VA GIF NAZORATI (O'chirilgan bo'lsa, hatto adminlar ham tashlay olmaydi - faqat whitelist!)
+    # -------------------------------------------------------------
+    # a) Stiker tekshiruvi:
+    if message.sticker and not settings.get("stickers_enabled", True):
+        if not await db.is_in_media_whitelist(chat_id, "sticker", user.id):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warn_msg = await message.answer(
+                f"🚫 <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda stiker yuborish o'chirilgan!",
+                parse_mode="HTML"
+            )
+            auto_delete(warn_msg, delay=5)
+            return
+
+    # b) GIF tekshiruvi:
+    is_gif = bool(message.animation or (message.document and message.document.mime_type in ["image/gif", "video/mp4"] and not message.video))
+    if is_gif and not settings.get("gifs_enabled", True):
+        if not await db.is_in_media_whitelist(chat_id, "gif", user.id):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            warn_msg = await message.answer(
+                f"🚫 <a href=\"tg://user?id={user.id}\">{user.full_name}</a>, guruhda GIF yuborish o'chirilgan!",
+                parse_mode="HTML"
+            )
+            auto_delete(warn_msg, delay=5)
+            return
+
+    # Adminlarga qolgan barcha himoyalardan o'tishga ruxsat beriladi
+    if await IsAdminFilter()(message, bot):
+        return
 
     # -------------------------------------------------------------
     # NOQONUNIY / BEGONA BARCHA SLASH BUYRUQLARNI DARHOL O'CHIRISH
@@ -360,9 +395,6 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
         except Exception:
             pass
         return
-
-    # Guruh sozlamalarini xotiradan (RAM - 0ms) olamiz
-    settings = await db.get_all_chat_settings(chat_id)
 
     # Dinamik Slowmode tekshiruvi (Orqa fonda, 0ms kechikish)
     if settings.get("auto_slowmode", False):

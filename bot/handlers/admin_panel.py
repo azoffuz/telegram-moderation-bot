@@ -189,6 +189,24 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"🎭 Stikerlar: {'✅ Ruxsat' if settings.get('stickers_enabled', True) else '❌ Taqiq'}",
+                    callback_data="toggle:stickers_enabled"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"🎬 GIFlar: {'✅ Ruxsat' if settings.get('gifs_enabled', True) else '❌ Taqiq'}",
+                    callback_data="toggle:gifs_enabled"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⚪️ Stiker & GIF Whitelist",
+                    callback_data="panel:media_whitelist"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🗑 Faollik Statistikalarni Tozalash",
                     callback_data="panel:clear_active_menu"
                 )
@@ -400,6 +418,85 @@ async def cb_panel_clear_act_exec(callback: CallbackQuery, bot: Bot):
         f"Tugmalarni bosish orqali kerakli himoyani darhol <b>yoqishingiz</b> yoki <b>o'chirishingiz</b> mumkin:"
     )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+@router.callback_query(F.data == "panel:media_whitelist")
+async def cb_panel_media_whitelist(callback: CallbackQuery):
+    """Admin panel orqali Stiker va GIF whitelist menyusi."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    chat_id = get_group_target_id()
+    s_list = await db.get_media_whitelist(chat_id, "sticker")
+    g_list = await db.get_media_whitelist(chat_id, "gif")
+
+    text = (
+        "⚪️ <b>STIKER VA GIF OQ RO'YXATI (WHITELIST)</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Guruhda stiker yoki GIFlar o'chirilgan (taqiqlangan) paytda, faqat ushbu oq ro'yxatdagi shaxslar yubora oladi.\n"
+        "⚠️ <i>Hatto guruh adminlari ham ushbu ro'yxatda bo'lmasa stiker/GIF tashlay olmaydi!</i>\n\n"
+        f"🎭 <b>Stikerlar oq ro'yxati:</b> <code>{len(s_list)} nafar</code>\n"
+        f"🎬 <b>GIFlar oq ro'yxati:</b> <code>{len(g_list)} nafar</code>\n\n"
+        "💡 <b>Guruhda boshqarish:</b>\n"
+        "• <code>/stickerwhitelist add @user</code> — Stikerga ruxsat\n"
+        "• <code>/stickerwhitelist del @user</code> — Stiker ruxsatini olish\n"
+        "• <code>/gifwhitelist add @user</code> — GIFga ruxsat\n"
+        "• <code>/gifwhitelist del @user</code> — GIF ruxsatini olish\n"
+        "• <code>/stickerwhitelist list</code> — Ro'yxatni ko'rish"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"🎭 Stiker Whitelist ({len(s_list)})", callback_data="panel:mw_view:sticker"),
+                InlineKeyboardButton(text=f"🎬 GIF Whitelist ({len(g_list)})", callback_data="panel:mw_view:gif")
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data="panel:settings")
+            ]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("panel:mw_view:"))
+async def cb_panel_mw_view(callback: CallbackQuery):
+    """Stiker yoki GIF oq ro'yxatini ko'rish."""
+    if not await db.is_bot_admin(callback.from_user.id):
+        await callback.answer("❌ Huquqingiz yetarli emas!", show_alert=True)
+        return
+
+    m_type = callback.data.split(":")[2]
+    chat_id = get_group_target_id()
+    items = await db.get_media_whitelist(chat_id, m_type)
+    type_title = "STIKERLAR" if m_type == "sticker" else "GIFLAR"
+
+    if not items:
+        text = (
+            f"⚪️ <b>{type_title} OQ RO'YXATI BO'SH</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Hozircha hech kimga alohida ruxsat berilmagan.\n\n"
+            f"💡 <i>Qo'shish uchun guruhda yozing:</i>\n"
+            f"<code>/{m_type}whitelist add @username</code>"
+        )
+    else:
+        text = f"⚪️ <b>{type_title} OQ RO'YXATI ({len(items)} nafar):</b>\n━━━━━━━━━━━━━━━━━━\n"
+        for idx, itm in enumerate(items, 1):
+            name = itm.get("full_name") or f"ID: {itm['user_id']}"
+            u_str = f"@{itm['username']}" if itm.get("username") else f"<code>{itm['user_id']}</code>"
+            text += f"{idx}. {html.escape(name)} ({u_str})\n"
+        text += (
+            f"\n💡 <i>O'chirish uchun:</i> <code>/{m_type}whitelist del @username</code>"
+        )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Whitelist menyusi", callback_data="panel:media_whitelist")]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
 
 @router.callback_query(F.data == "panel:admins")
 async def cb_panel_admins(callback: CallbackQuery):

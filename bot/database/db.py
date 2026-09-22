@@ -34,6 +34,7 @@ class Database:
         self._newcomers_cache: Dict[Tuple[int, int], Optional[datetime]] = {}
         self._log_threads_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._daily_activity_cache: Dict[Tuple[int, int, str], Tuple[int, bool]] = {}
+        self._media_whitelist_cache: Dict[Tuple[int, str], Set[int]] = {}
 
     async def connect(self):
         """Ma'lumotlar bazasiga ulanish va jadvallarni yaratish."""
@@ -120,7 +121,19 @@ class Database:
                         nightmode_auto BOOLEAN DEFAULT FALSE,
                         nightmode_start_hour INT DEFAULT 23,
                         nightmode_end_hour INT DEFAULT 7,
-                        last_auto_nightmode_action TEXT DEFAULT NULL
+                        last_auto_nightmode_action TEXT DEFAULT NULL,
+                        stickers_enabled BOOLEAN DEFAULT TRUE,
+                        gifs_enabled BOOLEAN DEFAULT TRUE
+                    );
+                """)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS media_whitelist (
+                        chat_id BIGINT,
+                        media_type TEXT,
+                        user_id BIGINT,
+                        added_by BIGINT,
+                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (chat_id, media_type, user_id)
                     );
                 """)
                 await conn.execute("""
@@ -212,7 +225,19 @@ class Database:
                     nightmode_auto BOOLEAN DEFAULT 0,
                     nightmode_start_hour INTEGER DEFAULT 23,
                     nightmode_end_hour INTEGER DEFAULT 7,
-                    last_auto_nightmode_action TEXT DEFAULT NULL
+                    last_auto_nightmode_action TEXT DEFAULT NULL,
+                    stickers_enabled BOOLEAN DEFAULT 1,
+                    gifs_enabled BOOLEAN DEFAULT 1
+                );
+            """)
+            await self.sqlite_conn.execute("""
+                CREATE TABLE IF NOT EXISTS media_whitelist (
+                    chat_id INTEGER,
+                    media_type TEXT,
+                    user_id INTEGER,
+                    added_by INTEGER,
+                    added_at TIMESTAMP,
+                    PRIMARY KEY (chat_id, media_type, user_id)
                 );
             """)
             await self.sqlite_conn.execute("""
@@ -285,6 +310,8 @@ class Database:
             ("active_tag_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
             ("active_tag_threshold", "INT DEFAULT 10", "INTEGER DEFAULT 10"),
             ("anti_mention", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("stickers_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("gifs_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -296,6 +323,35 @@ class Database:
                     await self.sqlite_conn.commit()
             except Exception:
                 pass
+
+        # media_whitelist jadvalini yaratish (mavjud bazalar uchun ham)
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS media_whitelist (
+                            chat_id BIGINT,
+                            media_type TEXT,
+                            user_id BIGINT,
+                            added_by BIGINT,
+                            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (chat_id, media_type, user_id)
+                        );
+                    """)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    CREATE TABLE IF NOT EXISTS media_whitelist (
+                        chat_id INTEGER,
+                        media_type TEXT,
+                        user_id INTEGER,
+                        added_by INTEGER,
+                        added_at TIMESTAMP,
+                        PRIMARY KEY (chat_id, media_type, user_id)
+                    );
+                """)
+                await self.sqlite_conn.commit()
+        except Exception:
+            pass
 
         # log_threads jadvalini yaratish (mavjud bazalar uchun ham)
         try:
@@ -504,6 +560,8 @@ class Database:
         "auto_slowmode": False,
         "active_tag_enabled": True,
         "anti_mention": True,
+        "stickers_enabled": True,
+        "gifs_enabled": True,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:
@@ -1760,6 +1818,126 @@ class Database:
                 await self.sqlite_conn.commit()
         except Exception as e:
             logger.error(f"clear_all_active_tags_in_db xatosi: {e}")
+
+    # ==================== MEDIA WHITELIST (STIKER & GIF OQ RO'YXATI) ====================
+    async def add_to_media_whitelist(self, chat_id: int, media_type: str, user_id: int, added_by: int) -> bool:
+        """Foydalanuvchini stiker yoki GIF oq ro'yxatiga qo'shish."""
+        m_type = media_type.lower().strip()
+        now = datetime.now()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO media_whitelist (chat_id, media_type, user_id, added_by, added_at)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (chat_id, media_type, user_id) DO NOTHING
+                    """, chat_id, m_type, user_id, added_by, now)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    INSERT OR IGNORE INTO media_whitelist (chat_id, media_type, user_id, added_by, added_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (chat_id, m_type, user_id, added_by, now))
+                await self.sqlite_conn.commit()
+
+            # Keshni yangilaymiz
+            self._media_whitelist_cache.setdefault((chat_id, m_type), set()).add(user_id)
+            return True
+        except Exception as e:
+            logger.error(f"add_to_media_whitelist xatosi: {e}")
+            return False
+
+    async def remove_from_media_whitelist(self, chat_id: int, media_type: str, user_id: int) -> bool:
+        """Foydalanuvchini stiker yoki GIF oq ro'yxatidan o'chirish."""
+        m_type = media_type.lower().strip()
+        try:
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    await conn.execute("""
+                        DELETE FROM media_whitelist WHERE chat_id = $1 AND media_type = $2 AND user_id = $3
+                    """, chat_id, m_type, user_id)
+            elif self.sqlite_conn:
+                await self.sqlite_conn.execute("""
+                    DELETE FROM media_whitelist WHERE chat_id = ? AND media_type = ? AND user_id = ?
+                """, (chat_id, m_type, user_id))
+                await self.sqlite_conn.commit()
+
+            if (chat_id, m_type) in self._media_whitelist_cache:
+                self._media_whitelist_cache[(chat_id, m_type)].discard(user_id)
+            return True
+        except Exception as e:
+            logger.error(f"remove_from_media_whitelist xatosi: {e}")
+            return False
+
+    async def is_in_media_whitelist(self, chat_id: int, media_type: str, user_id: int) -> bool:
+        """Foydalanuvchi stiker yoki GIF oq ro'yxatida bor-yo'qligini tekshirish (Owner avtomatik True)."""
+        if self.is_owner(user_id):
+            return True
+
+        m_type = media_type.lower().strip()
+        pair = (chat_id, m_type)
+        if pair not in self._media_whitelist_cache:
+            # Bazadan yuklaymiz
+            u_set = set()
+            try:
+                if self.is_postgres and self.pg_pool:
+                    async with self.pg_pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT user_id FROM media_whitelist WHERE chat_id = $1 AND media_type = $2",
+                            chat_id, m_type
+                        )
+                        for r in rows:
+                            u_set.add(r["user_id"])
+                elif self.sqlite_conn:
+                    async with self.sqlite_conn.execute(
+                        "SELECT user_id FROM media_whitelist WHERE chat_id = ? AND media_type = ?",
+                        (chat_id, m_type)
+                    ) as cursor:
+                        rows = await cursor.fetchall()
+                        for r in rows:
+                            u_set.add(r[0])
+            except Exception as e:
+                logger.error(f"is_in_media_whitelist yuklash xatosi: {e}")
+            self._media_whitelist_cache[pair] = u_set
+
+        return user_id in self._media_whitelist_cache[pair]
+
+    async def get_media_whitelist(self, chat_id: int, media_type: str) -> List[Dict[str, Any]]:
+        """Oq ro'yxatdagi barcha foydalanuvchilar ma'lumotlarini qaytaradi."""
+        m_type = media_type.lower().strip()
+        items = []
+        try:
+            query = """
+                SELECT mw.user_id, mw.added_by, mw.added_at, ku.username, ku.full_name
+                FROM media_whitelist mw
+                LEFT JOIN known_users ku ON mw.user_id = ku.user_id
+                WHERE mw.chat_id = $1 AND mw.media_type = $2
+                ORDER BY mw.added_at DESC
+            """ if self.is_postgres else """
+                SELECT mw.user_id, mw.added_by, mw.added_at, ku.username, ku.full_name
+                FROM media_whitelist mw
+                LEFT JOIN known_users ku ON mw.user_id = ku.user_id
+                WHERE mw.chat_id = ? AND mw.media_type = ?
+                ORDER BY mw.added_at DESC
+            """
+            if self.is_postgres and self.pg_pool:
+                async with self.pg_pool.acquire() as conn:
+                    rows = await conn.fetch(query, chat_id, m_type)
+                    for r in rows:
+                        items.append(dict(r))
+            elif self.sqlite_conn:
+                async with self.sqlite_conn.execute(query, (chat_id, m_type)) as cursor:
+                    rows = await cursor.fetchall()
+                    for r in rows:
+                        items.append({
+                            "user_id": r[0],
+                            "added_by": r[1],
+                            "added_at": r[2],
+                            "username": r[3],
+                            "full_name": r[4]
+                        })
+        except Exception as e:
+            logger.error(f"get_media_whitelist xatosi: {e}")
+        return items
 
     async def close(self):
         """Baza ulanishini xavfsiz yopish."""
