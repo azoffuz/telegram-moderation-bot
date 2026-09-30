@@ -189,6 +189,12 @@ async def settings_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text=f"📢 Kanal Taqiqi (Anti-Channel): {status_icon(settings.get('anti_channel', True))}",
+                    callback_data="toggle:anti_channel"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=f"🎭 Stikerlar: {'✅ Ruxsat' if settings.get('stickers_enabled', True) else '❌ Taqiq'}",
                     callback_data="toggle:stickers_enabled"
                 )
@@ -1682,5 +1688,48 @@ async def cmd_toggle_antimention(message: Message, bot: Bot):
     if message.chat.type in ["group", "supergroup"]:
         auto_delete(message, delay=10)
         auto_delete(msg, delay=20)
+
+@router.message(Command("antichannel", "channelguard"))
+async def cmd_toggle_antichannel(message: Message, bot: Bot):
+    """Adminlar uchun Begona Kanallar nomidan yozish nazoratini yoqish/o'chirish."""
+    if not await db.is_bot_admin(message.from_user.id):
+        if message.chat.type in ["group", "supergroup"]:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+        return
+
+    chat_id = message.chat.id if message.chat.type in ["group", "supergroup"] else get_group_target_id()
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1].lower() in ["on", "yoq", "yoqish", "enable", "1"]:
+        await db.set_chat_setting_bool(chat_id, "anti_channel", True)
+        msg = await message.reply(
+            "✅ <b>Kanal nomidan yozish nazorati (Anti-Channel) YOQILDI!</b>\n\n"
+            "• Guruhga ulangan rasmiy kanal va @reker_uz: <i>Ruxsat</i>\n"
+            "• Boshqa har qanday begona kanallar: <i>Xabari o'chiriladi va bloklanadi</i>",
+            parse_mode="HTML"
+        )
+    elif len(parts) > 1 and parts[1].lower() in ["off", "och", "ochirish", "disable", "0"]:
+        await db.set_chat_setting_bool(chat_id, "anti_channel", False)
+        msg = await message.reply(
+            "❌ <b>Kanal nomidan yozish nazorati (Anti-Channel) O'CHIRILDI!</b>\n\n"
+            "Endi kanallar nomidan xabarlar yuborishga ruxsat berildi.",
+            parse_mode="HTML"
+        )
+    else:
+        current = await db.get_chat_setting_bool(chat_id, "anti_channel", True)
+        status_txt = "YOQILGAN ✅" if current else "O'CHIRILGAN ❌"
+        msg = await message.reply(
+            f"📢 <b>Anti-Channel (Kanal taqiqi) holati:</b> <code>{status_txt}</code>\n\n"
+            f"💡 <i>O'zgartirish uchun:</i>\n"
+            f"• <code>/antichannel on</code> — Yoqish (faqat ulangan kanal va @reker_uz ga ruxsat)\n"
+            f"• <code>/antichannel off</code> — O'chirish (barcha kanallarga ruxsat)",
+            parse_mode="HTML"
+        )
+    if message.chat.type in ["group", "supergroup"]:
+        auto_delete(message, delay=10)
+        auto_delete(msg, delay=20)
+
 
 

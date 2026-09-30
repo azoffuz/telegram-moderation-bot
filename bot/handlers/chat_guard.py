@@ -1,4 +1,5 @@
 import re
+import html
 import time
 import logging
 import asyncio
@@ -13,7 +14,7 @@ from bot.config import config
 from bot.database import db
 from bot.filters.chat_type import IsGroupFilter
 from bot.filters.admin import IsAdminFilter, get_linked_chat_id
-from bot.services.logger import send_log, log_anti_link, log_anti_forward, log_moderation, log_anti_location
+from bot.services.logger import send_log, log_anti_link, log_anti_forward, log_moderation, log_anti_location, log_anti_channel_sender
 from bot.services.cleaner import auto_delete
 
 logger = logging.getLogger(__name__)
@@ -319,6 +320,43 @@ async def unified_chat_guard_handler(message: Message, bot: Bot):
             linked_id = await get_linked_chat_id(bot, message.chat.id)
             if linked_id and message.sender_chat.id == linked_id:
                 return
+
+        # Botning log kanali bo'lsa
+        if config.LOG_CHANNEL_ID and message.sender_chat.id == config.LOG_CHANNEL_ID:
+            return
+
+        # Ruxsat berilmagan boshqa har qanday kanal nomidan yozish nazorati
+        settings = await db.get_all_chat_settings(message.chat.id)
+        if settings.get("anti_channel", True):
+            try:
+                await message.delete()
+            except Exception as e:
+                logger.debug(f"Kanal xabarini o'chirishda xatolik: {e}")
+
+            try:
+                await bot.ban_chat_sender_chat(
+                    chat_id=message.chat.id,
+                    sender_chat_id=message.sender_chat.id
+                )
+            except Exception as e:
+                logger.debug(f"Kanalni guruhda bloklashda xatolik: {e}")
+
+            sender_name = html.escape(message.sender_chat.title or "Kanal")
+            warn_msg = None
+            try:
+                warn_msg = await message.answer(
+                    f"⚠️ <b>{sender_name}</b> nomidan yozish taqiqlangan!\n"
+                    f"Faqat guruhga ulangan kanal yoki @reker_uz nomidan xabar yozish mumkin.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            if warn_msg:
+                auto_delete(warn_msg, delay=8)
+
+            text_preview = message.text or message.caption or ""
+            await log_anti_channel_sender(bot, message.chat, message.sender_chat, text_preview)
+            return
 
     if not message.from_user:
         return

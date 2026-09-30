@@ -1,3 +1,4 @@
+import html
 import logging
 from datetime import datetime
 from typing import Optional
@@ -165,3 +166,24 @@ async def log_report(bot: Bot, reporter: User, reported_user: User, message_link
     text += f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     
     await send_log(bot, text, category="reports")
+
+async def log_anti_channel_sender(bot: Bot, chat: Chat, sender_chat: Chat, message_text: str):
+    """Kanal nomidan yozilgan begona xabar o'chirilishi va jazolanishi logi."""
+    preview = (message_text[:120] + "...") if len(message_text) > 120 else message_text
+    clean_preview = preview.replace("<", "&lt;").replace(">", "&gt;")
+    sender_title = html.escape(sender_chat.title or "Noma'lum kanal")
+    sender_user = f"@{sender_chat.username}" if sender_chat.username else "Username yo'q"
+    text = (
+        f"📢 <b>ANTI-CHANNEL (Kanal nomidan yozish taqiqlandi)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"📢 <b>Kanal:</b> {sender_title}\n"
+        f"🆔 <b>Kanal ID:</b> <code>{sender_chat.id}</code>\n"
+        f"🏷 <b>Username:</b> {sender_user}\n"
+        f"💬 <b>Guruh:</b> {html.escape(chat.title or '')}\n"
+        f"⚡️ <b>Chora:</b> Xabar o'chirildi va kanal guruhda bloklandi (banChatSenderChat)\n"
+    )
+    if clean_preview.strip():
+        text += f"📝 <b>Xabar matni:</b> <i>{clean_preview}</i>\n"
+    text += f"🕒 <b>Vaqt:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    await send_log(bot, text, category="spam")
+

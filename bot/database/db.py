@@ -123,7 +123,8 @@ class Database:
                         nightmode_end_hour INT DEFAULT 7,
                         last_auto_nightmode_action TEXT DEFAULT NULL,
                         stickers_enabled BOOLEAN DEFAULT TRUE,
-                        gifs_enabled BOOLEAN DEFAULT TRUE
+                        gifs_enabled BOOLEAN DEFAULT TRUE,
+                        anti_channel BOOLEAN DEFAULT TRUE
                     );
                 """)
                 await conn.execute("""
@@ -227,7 +228,8 @@ class Database:
                     nightmode_end_hour INTEGER DEFAULT 7,
                     last_auto_nightmode_action TEXT DEFAULT NULL,
                     stickers_enabled BOOLEAN DEFAULT 1,
-                    gifs_enabled BOOLEAN DEFAULT 1
+                    gifs_enabled BOOLEAN DEFAULT 1,
+                    anti_channel BOOLEAN DEFAULT 1
                 );
             """)
             await self.sqlite_conn.execute("""
@@ -312,6 +314,7 @@ class Database:
             ("anti_mention", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
             ("stickers_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
             ("gifs_enabled", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+            ("anti_channel", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
         ]
         for col, pg_type, sq_type in migrations:
             try:
@@ -562,6 +565,7 @@ class Database:
         "anti_mention": True,
         "stickers_enabled": True,
         "gifs_enabled": True,
+        "anti_channel": True,
     }
 
     async def get_all_chat_settings(self, chat_id: int) -> Dict[str, Any]:
